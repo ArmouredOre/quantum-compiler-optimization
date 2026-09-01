@@ -1,0 +1,36 @@
+# Core (always needed)
+pyyaml>=6.0
+
+# --- Optional research stacks (install the ones you need; see pyproject.toml extras) ---
+# Circuit representation & baseline compiler
+# qiskit>=1.0
+# qiskit-aer>=0.14
+# cirq>=1.3
+# pytket>=1.28
+
+# Graph / hypergraph processing
+# networkx>=3.2
+#   KaHyPar / METIS: install via system package manager or `pip install kahypar`
+
+# Reinforcement learning (Module A)
+# torch>=2.2
+# stable-baselines3>=2.3
+# gymnasium>=0.29
+
+# Graph neural networks (Module B)
+# torch>=2.2
+# torch-geometric>=2.5
+
+# Formal verification / SAT-SMT (Module C)
+# z3-solver>=4.13
+
+# Evolutionary multi-objective search (Module D)
+# pymoo>=0.6
+# deap>=1.4
+
+# Visualization / reporting
+# matplotlib>=3.8
+# pandas>=2.2
+
+# Tests
+# pytest>=8.0

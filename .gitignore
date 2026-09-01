@@ -1,0 +1,35 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+env/
+
+# Tooling
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
+
+# Project artifacts
+*.log
+runs/
+checkpoints/
+results/
+wandb/
+
+# Generated benchmark circuits are reproducible via benchmarks/generate_circuits.py
+# but we keep a committed baseline set, so DO NOT ignore benchmarks/circuits/

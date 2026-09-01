@@ -1,0 +1,40 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "qco"
+version = "0.2.0"
+description = "Hybrid quantum compiler optimizer: RL scheduling + GNN cancellation + SAT/SMT verification + NSGA-II refinement"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "Team 2" }]
+keywords = ["quantum", "compiler", "transpiler", "reinforcement-learning", "gnn", "smt", "nsga-ii"]
+dependencies = [
+    "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+compiler = ["qiskit>=1.0", "qiskit-aer>=0.14", "cirq>=1.3", "pytket>=1.28"]
+graphs   = ["networkx>=3.2"]                       # KaHyPar / METIS installed via system pkg
+rl       = ["torch>=2.2", "stable-baselines3>=2.3", "gymnasium>=0.29"]
+gnn      = ["torch>=2.2", "torch-geometric>=2.5"]
+smt      = ["z3-solver>=4.13"]
+ea       = ["pymoo>=0.6", "deap>=1.4"]
+viz      = ["matplotlib>=3.8", "pandas>=2.2"]
+test     = ["pytest>=8.0"]
+dev      = [
+    "qco[compiler]", "qco[graphs]", "qco[rl]", "qco[gnn]",
+    "qco[smt]", "qco[ea]", "qco[viz]", "qco[test]",
+]
+
+[project.scripts]
+qco-generate-benchmarks = "benchmarks.generate_circuits:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"

@@ -1,0 +1,56 @@
+# Benchmark circuit suite — Phase 2 deliverable.
+# Locally generated (dependency-free) families are produced by
+# `python benchmarks/generate_circuits.py` into benchmarks/circuits/*.qasm.
+# External corpora (MQT Bench, QASMBench) are pulled in Phase 3 once the
+# `compiler` extra is installed.
+
+seed: 20260901
+
+families:
+  ghz:
+    description: "Minimal entangler; trivial ground truth for the SMT equivalence check."
+    sizes: [5, 10, 20, 40]
+
+  qft:
+    description: "Dense controlled-phase rotations + long commutation chains; stresses the RL scheduler."
+    sizes: [5, 8, 12, 16]
+    include_swaps: true
+
+  grover:
+    description: "Repeated oracle/diffuser structure; many exact cancellations."
+    working_qubits: [3, 5, 7]     # ancillas are added automatically for the mcx ladder
+    iterations: [1, 2]
+
+  qaoa:
+    description: "Parameterized, hardware-relevant; tests the Module D fidelity surrogate."
+    sizes: [6, 10, 16]
+    p: [1, 2]
+    graph: "random-3-regular"
+
+  random_clifford_t:
+    description: "Matches the training distribution reported by Tao et al. 2026."
+    sizes: [5, 10, 20]
+    layers: 40
+    t_fraction: 0.15
+
+  random_cnot_pauli:
+    description: "Second gate set from Tao et al. 2026; isolates two-qubit-gate reduction."
+    sizes: [5, 10, 20]
+    layers: 40
+
+external:
+  mqt_bench:
+    description: "Community standard; cross-check once Qiskit is installed (Phase 3)."
+    status: "deferred"
+  qasmbench:
+    description: "Small/medium/large application circuits."
+    status: "deferred"
+
+evaluation:
+  baselines: ["qiskit-O0", "qiskit-O1", "qiskit-O2", "qiskit-O3"]   # wired in Phase 5
+  parameters:
+    - gate_count_reduction_pct
+    - depth_reduction_pct
+    - execution_time_ns
+    - estimated_fidelity
+    - runtime_complexity
