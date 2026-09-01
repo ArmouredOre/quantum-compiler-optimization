@@ -1,6 +1,6 @@
 """Module B — GraphSAGE / GAT model that scores cancellation candidates.
 
-Phase 3 (Member 3): implement the message-passing network, the training loop over
+Phase 3 (Prisha): implement the message-passing network, the training loop over
 labeled candidates (label = "valid AND reduces gate count without raising depth"),
 and precision/recall evaluation. Phase 2 exposes the call surface and falls back
 to the rule-based baseline so the pipeline runs.
@@ -30,7 +30,7 @@ class GNNCancellationPredictor:
         self._net = None
 
     def fit(self, dataset) -> None:  # pragma: no cover - Phase 3
-        raise NotImplementedError("GNNCancellationPredictor.fit lands in Phase 3 (Member 3)")
+        raise NotImplementedError("GNNCancellationPredictor.fit lands in Phase 3 (Prisha)")
 
     def predict(self, ir: IntermediateRepresentation, threshold: float = 0.5) -> list[CancellationCandidate]:
         """Ranked cancellation candidates (highest score first).

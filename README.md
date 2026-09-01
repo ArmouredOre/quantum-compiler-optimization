@@ -4,6 +4,16 @@
 
 **Team 2** · Review 1 project
 
+| Member | Name | Reg. No. | Role |
+|:------:|------|----------|------|
+| 1 | Ajay M | 24BCE2493 | Front‑End & Graph Infrastructure Lead · Lit‑review coordinator — `qco.ir`, `qco.graphs` |
+| 2 | Maanas Nair | 24BCT0157 | RL Engineer — Module A, `qco.modules.rl_scheduler` |
+| 3 | Prisha | 24BDS0146 | ML / Graph‑Learning Engineer — Module B, `qco.modules.gnn_cancellation` |
+| 4 | Sahib Singh | 24BCI0292 | Formal‑Methods Engineer — Module C, `qco.modules.smt_verifier` |
+| 5 | Swaraj Rane | 24BCT0086 | Integration & Evaluation Lead · Repo/CI/DevOps owner — Module D, `qco.evaluation`, `qco.pipeline` |
+
+Full responsibilities: [`docs/work_distribution.md`](docs/work_distribution.md).
+
 A hybrid quantum‑circuit optimizer that combines **reinforcement learning**
 (adaptive gate scheduling), a **graph neural network** (gate‑cancellation
 prediction), **SAT/SMT** solving (equivalence verification + bounded exact

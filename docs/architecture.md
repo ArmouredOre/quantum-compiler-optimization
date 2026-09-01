@@ -2,6 +2,7 @@
 
 **Project:** Quantum Compiler Optimization — Gate Scheduling & Gate Cancellation
 **Team 2 · Review 1 · Phase 2 deliverable (Architecture Design)**
+**Team:** Ajay M (24BCE2493) · Maanas Nair (24BCT0157) · Prisha (24BDS0146) · Sahib Singh (24BCI0292) · Swaraj Rane (24BCT0086) — see [`work_distribution.md`](work_distribution.md)
 
 ---
 
@@ -36,7 +37,7 @@ flowchart TD
     IN["Input circuit&#10;OpenQASM 2.0 / Qiskit / Cirq"]
 
     subgraph S1["Stage 1 — Front End"]
-        P["Parser &amp; IR Builder&#10;(Member 1)"]
+        P["Parser &amp; IR Builder&#10;(Ajay M)"]
     end
 
     subgraph S2["Stage 2 — Graph Construction"]
@@ -50,21 +51,21 @@ flowchart TD
 
     subgraph S4["Stage 4 — Cooperating Optimization Modules  (per block)"]
         direction LR
-        MA["Module A&#10;RL Adaptive Scheduler&#10;PPO / DDQN&#10;(Member 2)"]
-        MB["Module B&#10;GNN Cancellation Predictor&#10;GraphSAGE / GAT&#10;(Member 3)"]
-        MC["Module C&#10;SAT/SMT Verifier &amp; Bounded Optimizer&#10;Z3 / CVC5&#10;(Member 4)"]
+        MA["Module A&#10;RL Adaptive Scheduler&#10;PPO / DDQN&#10;(Maanas Nair)"]
+        MB["Module B&#10;GNN Cancellation Predictor&#10;GraphSAGE / GAT&#10;(Prisha)"]
+        MC["Module C&#10;SAT/SMT Verifier &amp; Bounded Optimizer&#10;Z3 / CVC5&#10;(Sahib Singh)"]
         MA -->|reordered / commuted gates| MB
         MB -->|ranked cancellation candidates| MC
         MC -.->|rejected rewrite: revert| MA
     end
 
     subgraph S5["Stage 5 — Module D"]
-        EA["Evolutionary Multi-Objective Search&#10;NSGA-II (pymoo / DEAP)&#10;(Member 5)"]
+        EA["Evolutionary Multi-Objective Search&#10;NSGA-II (pymoo / DEAP)&#10;(Swaraj Rane)"]
         PF["Pareto front of circuit variants"]
         EA --> PF
     end
 
-    subgraph S6["Stage 6 — Evaluation &amp; Benchmarking Engine  (Member 5)"]
+    subgraph S6["Stage 6 — Evaluation &amp; Benchmarking Engine  (Swaraj Rane)"]
         EV["5 metrics vs Qiskit O0-O3&#10;gate count | depth | exec time | fidelity | runtime cost"]
     end
 
@@ -165,13 +166,13 @@ closed‑loop edge `EV --> MA`.
 
 ## 5. Module ownership
 
-| Module / Stage | Owner |
-|----------------|-------|
-| Stage 1–3: IR, DAG/Hypergraph, Partitioning & block scheduling | Member 1 |
-| Stage 4 · Module A: RL adaptive gate scheduler | Member 2 |
-| Stage 4 · Module B: GNN cancellation predictor | Member 3 |
-| Stage 4 · Module C: SAT/SMT verifier & bounded optimizer | Member 4 |
-| Stage 5 · Module D: NSGA‑II search **+** Stage 6 evaluation engine **+** integration | Member 5 |
+| Module / Stage | Owner | Reg. No. |
+|----------------|-------|----------|
+| Stage 1–3: IR, DAG/Hypergraph, Partitioning & block scheduling | Ajay M | 24BCE2493 |
+| Stage 4 · Module A: RL adaptive gate scheduler | Maanas Nair | 24BCT0157 |
+| Stage 4 · Module B: GNN cancellation predictor | Prisha | 24BDS0146 |
+| Stage 4 · Module C: SAT/SMT verifier & bounded optimizer | Sahib Singh | 24BCI0292 |
+| Stage 5 · Module D: NSGA‑II search **+** Stage 6 evaluation engine **+** integration | Swaraj Rane | 24BCT0086 |
 
 ---
 

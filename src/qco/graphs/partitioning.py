@@ -6,7 +6,7 @@ Phase 2 provides:
   gate DAG, then greedy size-capped splitting) so the pipeline runs end-to-end
   before KaHyPar/METIS is wired in.
 
-Phase 3 (Member 1) replaces ``_fallback_partition`` with a real multilevel
+Phase 3 (Ajay M) replaces ``_fallback_partition`` with a real multilevel
 hypergraph cut via ``qco.graphs.hypergraph.QubitHypergraph.to_kahypar_hmetis``.
 """
 

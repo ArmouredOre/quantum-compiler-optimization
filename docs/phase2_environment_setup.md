@@ -47,10 +47,10 @@ pip install -e ".[dev]"     # dev = compiler + graphs + rl + gnn + smt + ea + te
 Or install per‑module while prototyping (Phase 3):
 
 ```bash
-pip install -e ".[rl]"      # Member 2
-pip install -e ".[gnn]"     # Member 3
-pip install -e ".[smt]"     # Member 4
-pip install -e ".[ea]"      # Member 5
+pip install -e ".[rl]"      # Maanas Nair  (Module A)
+pip install -e ".[gnn]"     # Prisha       (Module B)
+pip install -e ".[smt]"     # Sahib Singh  (Module C)
+pip install -e ".[ea]"      # Swaraj Rane  (Module D + integration)
 ```
 
 `python scripts/check_environment.py` prints a table of which optional stacks are

@@ -4,7 +4,7 @@ Phase 2 status:
 * ``from_qasm2`` : implemented for the ``qelib1.inc`` gate subset the benchmark
   suite uses (enough to load every circuit in ``benchmarks/circuits/``).
 * ``from_qiskit`` / ``from_cirq`` : signatures frozen; bodies land in Phase 3
-  (Member 1) once the ``compiler`` extra is installed.
+  (Ajay M) once the ``compiler`` extra is installed.
 """
 
 from __future__ import annotations
@@ -63,7 +63,7 @@ def from_qasm2(text: str) -> IntermediateRepresentation:
 def from_qiskit(circuit: Any) -> IntermediateRepresentation:  # pragma: no cover - Phase 3
     """Convert a ``qiskit.QuantumCircuit`` to the internal IR.
 
-    Phase 3 (Member 1): iterate ``circuit.data``, map standard gate names,
+    Phase 3 (Ajay M): iterate ``circuit.data``, map standard gate names,
     resolve ``Parameter`` bindings, and flatten registers to a single index
     space.
     """
@@ -71,7 +71,7 @@ def from_qiskit(circuit: Any) -> IntermediateRepresentation:  # pragma: no cover
 
 
 def from_cirq(circuit: Any) -> IntermediateRepresentation:  # pragma: no cover - Phase 3
-    """Convert a ``cirq.Circuit`` to the internal IR (Phase 3, Member 1)."""
+    """Convert a ``cirq.Circuit`` to the internal IR (Phase 3, Ajay M)."""
     raise NotImplementedError("from_cirq lands in Phase 3 (needs the `compiler` extra)")
 
 

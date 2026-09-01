@@ -1,4 +1,4 @@
-"""Module D — NSGA-II evolutionary multi-objective compiler (Member 5)."""
+"""Module D — NSGA-II evolutionary multi-objective compiler (Swaraj Rane)."""
 
 from qco.modules.evolutionary.nsga2 import NSGA2Compiler, Objective, ParetoPoint
 

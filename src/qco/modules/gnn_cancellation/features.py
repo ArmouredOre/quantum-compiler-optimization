@@ -34,7 +34,7 @@ def gate_node_features(gate: Gate, num_qubits: int) -> list[float]:
 
 
 def build_pyg_data(ir: IntermediateRepresentation):  # pragma: no cover - Phase 3
-    """Build a ``torch_geometric.data.Data`` object (Phase 3, Member 3)."""
+    """Build a ``torch_geometric.data.Data`` object (Phase 3, Prisha)."""
     raise NotImplementedError("needs the `gnn` extra (torch-geometric)")
 
 
