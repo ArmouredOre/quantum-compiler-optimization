@@ -1,5 +1,7 @@
 # Quantum Compiler Optimization — Gate Scheduling & Gate Cancellation
 
+[![CI](https://github.com/ArmouredOre/quantum-compiler-optimization/actions/workflows/ci.yml/badge.svg)](https://github.com/ArmouredOre/quantum-compiler-optimization/actions/workflows/ci.yml)
+
 **Team 2** · Review 1 project
 
 A hybrid quantum‑circuit optimizer that combines **reinforcement learning**
