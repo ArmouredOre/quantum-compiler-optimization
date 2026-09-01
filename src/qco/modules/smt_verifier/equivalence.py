@@ -3,7 +3,7 @@
 Every rewrite emitted by Module A or Module B must pass through here before the
 pipeline accepts it (the verification invariant in docs/architecture.md).
 
-Phase 3 (Member 4):
+Phase 3 (Sahib Singh):
 * SMT path  : encode U(original) == U(rewrite) up to global phase in Z3/CVC5 over
               a symbolic gate algebra; return SAT/UNSAT + counterexample.
 * Numeric path (validation): build both unitaries with Qiskit ``Operator`` and
@@ -180,7 +180,7 @@ class EquivalenceChecker:
 
     def check(self, original: IntermediateRepresentation, rewrite: IntermediateRepresentation) -> EquivalenceResult:
         if self.backend in ("smt", "z3", "cvc5"):  # pragma: no cover - Phase 3
-            raise NotImplementedError("SMT equivalence encoding lands in Phase 3 (Member 4)")
+            raise NotImplementedError("SMT equivalence encoding lands in Phase 3 (Sahib Singh)")
         if original.num_qubits != rewrite.num_qubits:
             return EquivalenceResult(False, "numeric", "qubit count differs")
         ua, ub = circuit_unitary(original), circuit_unitary(rewrite)

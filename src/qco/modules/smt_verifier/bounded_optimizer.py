@@ -4,7 +4,7 @@ Given a small window (<= ``max_qubits`` qubits, <= ``max_gates`` gates), ask the
 solver for the minimum-gate circuit implementing the same unitary, or a proof
 that none is smaller (Gouzien & Sangouard 2025; Guo et al. 2026 encodings).
 
-Phase 3 (Member 4). Phase 2 exposes the interface and a no-op that returns the
+Phase 3 (Sahib Singh). Phase 2 exposes the interface and a no-op that returns the
 window unchanged so the pipeline stays correct.
 """
 
@@ -38,4 +38,4 @@ class BoundedResynthesizer:
         return self._solve(window)
 
     def _solve(self, window):  # pragma: no cover - Phase 3
-        raise NotImplementedError("exact SMT re-synthesis lands in Phase 3 (Member 4)")
+        raise NotImplementedError("exact SMT re-synthesis lands in Phase 3 (Sahib Singh)")

@@ -1,4 +1,4 @@
-"""Module A — PPO/DDQN agent wrapper (Member 2, Phase 3).
+"""Module A — PPO/DDQN agent wrapper (Maanas Nair, Phase 3).
 
 Design (from the literature survey): pair the learned policy with a deterministic
 Commutation-and-Reduction pass so the agent spends capacity on non-trivial
@@ -29,7 +29,7 @@ class RLScheduler:
         self._model = None
 
     def train(self, circuits: list[IntermediateRepresentation]) -> None:  # pragma: no cover - Phase 3
-        raise NotImplementedError("RLScheduler.train lands in Phase 3 (Member 2)")
+        raise NotImplementedError("RLScheduler.train lands in Phase 3 (Maanas Nair)")
 
     def load(self, path: str) -> "RLScheduler":  # pragma: no cover - Phase 3
         raise NotImplementedError

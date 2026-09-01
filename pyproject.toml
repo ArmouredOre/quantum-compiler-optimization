@@ -9,7 +9,13 @@ description = "Hybrid quantum compiler optimizer: RL scheduling + GNN cancellati
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
-authors = [{ name = "Team 2" }]
+authors = [
+    { name = "Ajay M" },
+    { name = "Maanas Nair" },
+    { name = "Prisha" },
+    { name = "Sahib Singh" },
+    { name = "Swaraj Rane", email = "raneyswaraj23007@gmail.com" },
+]
 keywords = ["quantum", "compiler", "transpiler", "reinforcement-learning", "gnn", "smt", "nsga-ii"]
 dependencies = [
     "pyyaml>=6.0",

@@ -4,7 +4,7 @@ Objectives (minimized): gate count, depth, (1 - estimated fidelity).
 Fitness uses a structure-aware fidelity surrogate, not full unitary simulation,
 so it scales past ~12 qubits (Scientific Reports 2026).
 
-Phase 3 (Member 5) implements selection/crossover/mutation via pymoo or DEAP.
+Phase 3 (Swaraj Rane) implements selection/crossover/mutation via pymoo or DEAP.
 Phase 2 ships:
 * the ``Objective`` / ``ParetoPoint`` contracts, and
 * a working non-dominated-sort so the pipeline can already return a Pareto front
@@ -74,7 +74,7 @@ class NSGA2Compiler:
     def evolve(self, seeds: list[IntermediateRepresentation]) -> list[ParetoPoint]:
         """Phase 2: score the seeds and return their non-dominated front.
 
-        Phase 3 (Member 5): run the full NSGA-II loop with genetic operators over
+        Phase 3 (Swaraj Rane): run the full NSGA-II loop with genetic operators over
         gate sequences, seeded with these circuits.
         """
         points = [

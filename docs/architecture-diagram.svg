@@ -32,7 +32,7 @@
   <rect class="stage" x="330" y="118" width="300" height="66" rx="9"/>
   <text class="lbl" x="480" y="145" text-anchor="middle">Parser &amp; IR Builder</text>
   <text class="sub" x="480" y="165" text-anchor="middle">→ internal intermediate representation</text>
-  <text class="tag" x="480" y="180" text-anchor="middle">Member 1</text>
+  <text class="tag" x="480" y="180" text-anchor="middle">Ajay M · 24BCE2493</text>
 
   <!-- Stage 2 -->
   <text class="banner" x="70" y="228">STAGE 2 — GRAPH CONSTRUCTION</text>
@@ -61,21 +61,21 @@
   <text class="sub" x="211" y="566" text-anchor="middle">RL Adaptive Scheduler</text>
   <text class="sub" x="211" y="583" text-anchor="middle">PPO / DDQN</text>
   <text class="sub" x="211" y="600" text-anchor="middle">reorder · commute · rewrite</text>
-  <text class="tag" x="211" y="622" text-anchor="middle">Member 2</text>
+  <text class="tag" x="211" y="622" text-anchor="middle">Maanas Nair · 24BCT0157</text>
 
   <rect class="mod" x="365" y="516" width="230" height="130" rx="9"/>
   <text class="lbl" x="480" y="546" text-anchor="middle">Module B</text>
   <text class="sub" x="480" y="566" text-anchor="middle">GNN Cancellation Predictor</text>
   <text class="sub" x="480" y="583" text-anchor="middle">GraphSAGE / GAT</text>
   <text class="sub" x="480" y="600" text-anchor="middle">ranks cancellation candidates</text>
-  <text class="tag" x="480" y="622" text-anchor="middle">Member 3</text>
+  <text class="tag" x="480" y="622" text-anchor="middle">Prisha · 24BDS0146</text>
 
   <rect class="mod" x="634" y="516" width="230" height="130" rx="9"/>
   <text class="lbl" x="749" y="546" text-anchor="middle">Module C</text>
   <text class="sub" x="749" y="566" text-anchor="middle">SAT/SMT Verifier &amp;</text>
   <text class="sub" x="749" y="583" text-anchor="middle">Bounded Optimizer — Z3 / CVC5</text>
   <text class="sub" x="749" y="600" text-anchor="middle">checks every rewrite</text>
-  <text class="tag" x="749" y="622" text-anchor="middle">Member 4</text>
+  <text class="tag" x="749" y="622" text-anchor="middle">Sahib Singh · 24BCI0292</text>
 
   <path class="edge" d="M326 581 H365" marker-end="url(#arrow)"/>
   <path class="edge" d="M595 581 H634" marker-end="url(#arrow)"/>
@@ -88,14 +88,14 @@
   <text class="lbl" x="480" y="765" text-anchor="middle">Evolutionary Multi-Objective Search</text>
   <text class="sub" x="480" y="785" text-anchor="middle">NSGA-II (pymoo / DEAP) · fidelity surrogates</text>
   <text class="sub" x="480" y="803" text-anchor="middle">→ Pareto front of circuit variants</text>
-  <text class="tag" x="480" y="819" text-anchor="middle">Member 5</text>
+  <text class="tag" x="480" y="819" text-anchor="middle">Swaraj Rane · 24BCT0086</text>
 
   <!-- Stage 6 -->
   <text class="banner" x="70" y="868">STAGE 6 — EVALUATION &amp; BENCHMARKING ENGINE</text>
   <rect class="stage" x="230" y="876" width="500" height="86" rx="9"/>
   <text class="lbl" x="480" y="903" text-anchor="middle">5 metrics vs Qiskit O0–O3</text>
   <text class="sub" x="480" y="923" text-anchor="middle">gate count · depth · exec time · fidelity · optimizer runtime</text>
-  <text class="tag" x="480" y="945" text-anchor="middle">Member 5</text>
+  <text class="tag" x="480" y="945" text-anchor="middle">Swaraj Rane · 24BCT0086</text>
 
   <!-- Output -->
   <rect class="io" x="300" y="1010" width="360" height="58" rx="9"/>

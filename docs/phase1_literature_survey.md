@@ -1,5 +1,8 @@
 # Phase 1 — Literature Survey
 
+**Team 2:** Ajay M (24BCE2493) · Maanas Nair (24BCT0157) · Prisha (24BDS0146) · Sahib Singh (24BCI0292) · Swaraj Rane (24BCT0086)
+Lit‑review compilation coordinated by Ajay M; each member surveyed their own module (see [`work_distribution.md`](work_distribution.md)).
+
 Consolidated from the Review 1 report. Organized around the four project
 sub‑topics plus the classical rule‑based baseline the system is benchmarked
 against.

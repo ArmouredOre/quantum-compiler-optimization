@@ -1,7 +1,7 @@
 """Module A — RL environment over the gate DAG.
 
 Interfaces are frozen for Phase 2; the transition/reward bodies are Phase 3
-(Member 2). The environment follows the Gymnasium API so Stable-Baselines3 can
+(Maanas Nair). The environment follows the Gymnasium API so Stable-Baselines3 can
 drive it directly.
 
 State   : gate-DAG features (per-node gate type, qubit ids, depth position,
@@ -57,10 +57,10 @@ class SchedulerEnv:
 
     # -- Gymnasium API -----------------------------------------------------
     def reset(self, *, seed: int | None = None):  # pragma: no cover - Phase 3
-        raise NotImplementedError("SchedulerEnv.reset lands in Phase 3 (Member 2)")
+        raise NotImplementedError("SchedulerEnv.reset lands in Phase 3 (Maanas Nair)")
 
     def step(self, action: Action):  # pragma: no cover - Phase 3
-        raise NotImplementedError("SchedulerEnv.step lands in Phase 3 (Member 2)")
+        raise NotImplementedError("SchedulerEnv.step lands in Phase 3 (Maanas Nair)")
 
     # -- helpers already usable ------------------------------------------------
     def legal_actions(self) -> list[Action]:

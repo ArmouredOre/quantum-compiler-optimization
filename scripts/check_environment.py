@@ -16,12 +16,12 @@ sys.path.insert(0, os.path.join(_ROOT, "src"))
 
 STACKS = {
     "core": ["yaml"],
-    "compiler (Members 1/5)": ["qiskit", "qiskit_aer", "cirq", "pytket"],
-    "graphs (Member 1)": ["networkx"],
-    "rl / Module A (Member 2)": ["torch", "stable_baselines3", "gymnasium"],
-    "gnn / Module B (Member 3)": ["torch", "torch_geometric"],
-    "smt / Module C (Member 4)": ["z3"],
-    "ea / Module D (Member 5)": ["pymoo", "deap"],
+    "compiler (Ajay M / Swaraj Rane)": ["qiskit", "qiskit_aer", "cirq", "pytket"],
+    "graphs (Ajay M)": ["networkx"],
+    "rl / Module A (Maanas Nair)": ["torch", "stable_baselines3", "gymnasium"],
+    "gnn / Module B (Prisha)": ["torch", "torch_geometric"],
+    "smt / Module C (Sahib Singh)": ["z3"],
+    "ea / Module D (Swaraj Rane)": ["pymoo", "deap"],
     "viz / reporting": ["matplotlib", "pandas"],
     "test": ["pytest"],
 }
@@ -61,7 +61,7 @@ def main() -> int:
         print("\nInstall core deps:  pip install pyyaml")
         return 1
     print("\nCore ready. Install per-module extras as you start Phase 3, e.g.:")
-    print("  pip install -e \".[rl]\"   # Member 2")
+    print("  pip install -e \".[rl]\"   # Maanas Nair")
     return 0
 
 
