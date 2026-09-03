@@ -34,56 +34,59 @@ Design principles:
 
 ```mermaid
 flowchart TD
-    IN["Input circuit&#10;OpenQASM 2.0 / Qiskit / Cirq"]
+    IN["Input circuit<br/>OpenQASM 2.0 / Qiskit / Cirq"]
 
     subgraph S1["Stage 1 — Front End"]
-        P["Parser &amp; IR Builder&#10;(Ajay M)"]
+        P["Parser &amp; IR Builder<br/><i>Ajay M</i>"]
     end
 
     subgraph S2["Stage 2 — Graph Construction"]
-        DAG["Gate-dependency DAG&#10;nodes = gates, edges = qubit-wire deps"]
-        HG["Qubit-interaction hypergraph&#10;vertices = qubits, hyperedges = multi-qubit gates"]
+        DAG["Gate-dependency DAG<br/>nodes = gates · edges = qubit-wire deps"]
+        HG["Qubit-interaction hypergraph<br/>vertices = qubits · hyperedges = multi-qubit gates"]
     end
 
     subgraph S3["Stage 3 — Partitioning &amp; Block Scheduling"]
-        PART["Multilevel partitioning&#10;KaHyPar / METIS -> near-independent blocks"]
+        PART["Multilevel partitioning — KaHyPar / METIS<br/>large circuit &rarr; near-independent blocks"]
     end
 
     subgraph S4["Stage 4 — Cooperating Optimization Modules  (per block)"]
         direction LR
-        MA["Module A&#10;RL Adaptive Scheduler&#10;PPO / DDQN&#10;(Maanas Nair)"]
-        MB["Module B&#10;GNN Cancellation Predictor&#10;GraphSAGE / GAT&#10;(Prisha)"]
-        MC["Module C&#10;SAT/SMT Verifier &amp; Bounded Optimizer&#10;Z3 / CVC5&#10;(Sahib Singh)"]
-        MA -->|reordered / commuted gates| MB
-        MB -->|ranked cancellation candidates| MC
-        MC -.->|rejected rewrite: revert| MA
+        MA["Module A<br/>RL Adaptive Scheduler<br/>PPO / DDQN<br/><i>Maanas Nair</i>"]
+        MB["Module B<br/>GNN Cancellation Predictor<br/>GraphSAGE / GAT<br/><i>Prisha</i>"]
+        MC["Module C<br/>SAT/SMT Verifier &amp; Bounded Optimizer<br/>Z3 / CVC5<br/><i>Sahib Singh</i>"]
+        MA -- "reordered / commuted gates" --> MB
+        MB -- "ranked cancellation candidates" --> MC
+        MC -. "rejected rewrite: revert" .-> MA
     end
 
     subgraph S5["Stage 5 — Module D"]
-        EA["Evolutionary Multi-Objective Search&#10;NSGA-II (pymoo / DEAP)&#10;(Swaraj Rane)"]
+        EA["Evolutionary Multi-Objective Search<br/>NSGA-II (pymoo / DEAP)<br/><i>Swaraj Rane</i>"]
         PF["Pareto front of circuit variants"]
         EA --> PF
     end
 
-    subgraph S6["Stage 6 — Evaluation &amp; Benchmarking Engine  (Swaraj Rane)"]
-        EV["5 metrics vs Qiskit O0-O3&#10;gate count | depth | exec time | fidelity | runtime cost"]
+    subgraph S6["Stage 6 — Evaluation &amp; Benchmarking Engine"]
+        EV["5 metrics vs Qiskit O0–O3<br/>gate count · depth · exec time · fidelity · optimizer runtime<br/><i>Swaraj Rane</i>"]
     end
 
-    OUT["Output&#10;Pareto-optimal circuit variants + benchmark report"]
+    OUT["Output<br/>Pareto-optimal circuit variants + benchmark report"]
 
-    IN --> P --> DAG
+    IN --> P
+    P --> DAG
     P --> HG
     DAG --> PART
     HG --> PART
-    PART -->|blocks| MA
-    MC -->|verified candidate circuits| EA
+    PART -- "blocks" --> MA
+    MC -- "verified candidate circuits" --> EA
     PF --> EV
     EV --> OUT
-    EV -->|reward signal (closed loop)| MA
+    EV == "reward signal (closed loop)" ==> MA
 
-    classDef stage fill:#eef4ff,stroke:#3366cc,stroke-width:1px;
-    classDef io fill:#f5f5f5,stroke:#888,stroke-width:1px;
+    classDef io fill:#f1f5f9,stroke:#64748b,color:#0f172a;
+    classDef mod fill:#ffffff,stroke:#3366cc,color:#0f172a;
     class IN,OUT io;
+    class MA,MB,MC,EA mod;
+    linkStyle 13 stroke:#c2410c,stroke-width:2px;
 ```
 
 > A static, presentation‑ready vector version of the same diagram is in

@@ -85,4 +85,5 @@ GNN / SMT / EA stacks are only needed from Phase 3 onward.
 * [Evaluation parameters](docs/evaluation_parameters.md) — the 5 measured metrics
 * [Work distribution](docs/work_distribution.md) — 5 members, one module each
 * [Project timeline](docs/project_timeline.md) — 6 phases / 3 reviews
+* [Sprint plan](docs/sprint_plan.md) — 6 sprints, per-member tasks, dependency ordering
 * [Phase 2 — environment setup](docs/phase2_environment_setup.md)
