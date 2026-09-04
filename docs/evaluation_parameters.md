@@ -17,3 +17,31 @@ across the suite by
 [`src/qco/evaluation/benchmark_runner.py`](../src/qco/evaluation/benchmark_runner.py).
 The benchmark runner also returns a scalarized score used as the RL reward signal
 (closed‑loop edge in the architecture).
+
+## Device calibration profiles
+
+`execution_time` and `estimated_fidelity` (and therefore `scalarized_reward` and
+the benchmark runner) take a named **calibration profile** from
+[`src/qco/evaluation/calibration.py`](../src/qco/evaluation/calibration.py):
+
+| Profile | Notes |
+|---------|-------|
+| `default` | Coarse superconducting-style placeholder (the original Phase 2 numbers) |
+| `superconducting_ibm_like` | Illustrative fixed-frequency transmon profile: fast gates, moderate 2‑qubit error |
+| `trapped_ion_like` | Illustrative trapped-ion profile: microsecond gates, low error rates |
+
+These are order-of-magnitude, hand-picked profiles for exercising the metrics
+before real hardware data is available — **not** pulled from a specific live
+backend. Real per-backend calibration (via Qiskit's `BackendProperties`) is
+wired in Phase 5 without changing these function signatures — pass a profile
+name (`run_benchmarks(optimizer, calibration="trapped_ion_like")`) or a custom
+`Calibration` instance.
+
+## Benchmark runner output
+
+`BenchmarkReport.to_markdown()` renders a comparison table (calibration profile
+in the header); `BenchmarkReport.to_csv()` renders the same rows as CSV for
+spreadsheets/plotting. Every row also carries `baseline_name` /
+`baseline_gate_count` / `baseline_depth` columns — `None` until the Phase 5
+Qiskit O0–O3 harness (`run_benchmarks(..., baseline=qiskit_o2_pass)`) fills
+them in, so the schema doesn't change shape when that lands.
