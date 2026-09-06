@@ -1,4 +1,4 @@
-"""Module B — GNN-based gate-cancellation predictor (Prisha)."""
+"""Module B — GNN-based gate-cancellation predictor."""
 
 from qco.modules.gnn_cancellation.dataset import (
     dump_candidates,
