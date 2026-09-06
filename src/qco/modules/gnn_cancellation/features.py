@@ -130,6 +130,28 @@ def _edge_features(ir: IntermediateRepresentation, u: int, v: int) -> list[float
     return [shared, span, same_name, same_support]
 
 
+def overlapping_gate_pairs(ir: IntermediateRepresentation) -> list[tuple[int, int]]:
+    """Every ``(i, j)`` with ``i < j`` whose gates share at least one qubit.
+
+    Cancellation requires overlapping support, so this is the candidate pool
+    the GNN scores.  Rule-based pair endpoints are a subset of these pairs.
+    """
+    n = len(ir.gates)
+    supports = [set(g.qubits) for g in ir.gates]
+    pairs: list[tuple[int, int]] = []
+    for i in range(n):
+        qi = supports[i]
+        for j in range(i + 1, n):
+            if qi & supports[j]:
+                pairs.append((i, j))
+    return pairs
+
+
+def gate_pair_features(ir: IntermediateRepresentation, i: int, j: int) -> list[float]:
+    """Structural features of an unordered gate pair (not necessarily a DAG edge)."""
+    return _edge_features(ir, i, j)
+
+
 def build_pyg_data(ir: IntermediateRepresentation):
     """Build a ``torch_geometric.data.Data`` object for ``ir``.
 
