@@ -10,6 +10,11 @@ import pytest
 from qco.ir.intermediate_representation import ARITY, IntermediateRepresentation
 from qco.ir.parser import from_qasm2
 from qco.modules.gnn_cancellation.dataset import dump_candidates, dump_suite, load_candidates
+from qco.modules.gnn_cancellation.eval import (
+    adjacent_inverse_baseline,
+    compare_candidates,
+    held_out_split,
+)
 from qco.modules.gnn_cancellation.features import (
     EDGE_FEATURE_DIM,
     FEATURE_DIM,
@@ -24,6 +29,7 @@ from qco.modules.gnn_cancellation.features import (
     build_pyg_data,
     gate_node_features,
     gates_commute,
+    overlapping_gate_pairs,
     rule_based_candidates,
 )
 
@@ -246,3 +252,31 @@ def test_build_pyg_data_empty_circuit():
     data = build_pyg_data(ir)
     assert data.x.shape == (0, FEATURE_DIM)
     assert data.edge_index.shape == (2, 0)
+
+
+def test_overlapping_pairs_skip_disjoint_support():
+    ir = IntermediateRepresentation(2)
+    ir.add("h", [0]).add("h", [1]).add("cx", [0, 1])
+    pairs = overlapping_gate_pairs(ir)
+    assert (0, 2) in pairs and (1, 2) in pairs
+    assert (0, 1) not in pairs
+
+
+def test_adjacent_baseline_misses_spaced_inverses():
+    ir = IntermediateRepresentation(2, name="spaced")
+    ir.add("h", [0]).add("x", [1]).add("h", [0])
+    gold = rule_based_candidates(ir)
+    naive = adjacent_inverse_baseline(ir)
+    assert any({c.a, c.b} == {0, 2} for c in gold)
+    assert not any({c.a, c.b} == {0, 2} for c in naive)
+    metrics = compare_candidates(gold, naive)
+    assert metrics.fn >= 1
+    assert metrics.precision == 1.0 or metrics.n_pred == 0
+
+
+def test_held_out_split_is_disjoint_and_covers():
+    items = list(range(10))
+    train, test = held_out_split(items, test_fraction=0.3, seed=2)
+    assert train and test
+    assert set(train).isdisjoint(test)
+    assert set(train) | set(test) == set(items)
