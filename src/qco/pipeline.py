@@ -98,8 +98,16 @@ class HybridOptimizer:
             reward = scalarized_reward(circuit, stitched)  # Stage 6 -> Module A (closed loop)
             circuit = stitched
 
-        # Stage 5: Pareto refinement over the (single, for now) verified candidate.
+        # Stage 5: NSGA-II searches gate-sequence variants of the verified candidate.
+        # Sprint 2's genetic operators can mutate a circuit into something no longer
+        # equivalent (even the empty circuit, which trivially "wins" on gate
+        # count/depth/fidelity) - re-verify before it reaches the caller, same
+        # correctness gate as every other rewrite in this pipeline.
         front = self.ea.evolve([circuit])
+        if self.config.verify_rewrites and circuit.num_qubits <= 8:
+            front = [p for p in front if self.checker.check(circuit, p.circuit).equivalent]
+            if not front:
+                front = [self.ea.score(circuit)]
         return PipelineResult(pareto_front=front, reward=reward, blocks=len(front), verified=verified)
 
 

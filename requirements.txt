@@ -25,7 +25,7 @@ pyyaml>=6.0
 # z3-solver>=4.13
 
 # Evolutionary multi-objective search (Module D)
-# pymoo>=0.6
+pymoo>=0.6
 # deap>=1.4
 
 # Visualization / reporting
