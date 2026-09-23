@@ -8,8 +8,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field, replace
 from typing import Iterable, Iterator
 
-# Single-qubit self-inverse gates (g . g = I) and 2-qubit self-inverse gates.
-SELF_INVERSE = {"x", "y", "z", "h", "cx", "cz", "swap"}
+# Single-qubit self-inverse gates (g . g = I) and multi-qubit self-inverse gates.
+SELF_INVERSE = {"x", "y", "z", "h", "cx", "cz", "swap", "ccx"}
 # Rotation gates: g(theta) . g(-theta) = I  (used by cancellation heuristics).
 PARAMETRIC = {"rx", "ry", "rz", "p", "cp", "crx", "cry", "crz", "rzz", "rxx"}
 # Number of qubits each supported gate acts on.
