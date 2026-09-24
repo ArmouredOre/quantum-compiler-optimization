@@ -138,7 +138,64 @@ machinery expects it and because it keeps "ran out of budget" separable from
   call site that constructs `RewardWeights()` (there are none yet, since this
   was a stub) is affected either way.
 
-## 6. Files added / changed
+## 6. CI fix: module-level skip was wiping the whole test file
+ 
+**Bug found post-review, on GitHub CI (Python 3.10/3.11/3.12), not caught
+locally:** the original `TestSpacesAdapter` guard used
+ 
+```python
+gym_spaces = pytest.importorskip("qco.modules.rl_scheduler.spaces", ...)
+```
+ 
+which does not actually skip anything, because `spaces.py` is designed to
+**import successfully even without `gymnasium` installed** (see §2, that's
+the whole point of the lazy-import pattern). The `ImportError` only fires
+later, *inside* `make_observation_space()`/`make_action_space()`, when a test
+actually calls them. So on CI (which installs only `.[test]`, never `.[rl]`
+— see `.github/workflows/*.yml`), `importorskip` let collection proceed, and
+the two tests that call those functions failed with the lazy `ImportError`
+instead of being skipped.
+ 
+A follow-up attempt replaced this with a **module-level**
+`pytest.skip(..., allow_module_level=True)` guard. This made the two
+originally-failing tests disappear correctly, but as a side effect it also
+silently skipped **every other test in the file** which is a module-level skip
+aborts collection of the whole module, not just the class it was
+(informally) scoped to. Locally, without `gymnasium` installed, this reduced
+the file from 46 collected tests to 1 (skipped), which would have hidden
+regressions in the rewrite/environment tests indefinitely.
+ 
+**Fix applied:**
+ 
+* `spaces.py` now exposes an explicit `GYMNASIUM_AVAILABLE: bool` constant
+  (set once, at import time, in the same `try/except ImportError` block that
+  already detects whether `gymnasium` imported successfully) instead of
+  overloading the gymnasium `spaces` submodule alias for double duty as both
+  "the gymnasium spaces module" and "a proxy for whether gym is installed."
+  The alias itself was renamed `_gym_spaces_module` (private) so it can't be
+  confused with a test file's `import ... as gym_spaces`.
+* `test_rl_scheduler.py` now uses a **class-scoped**
+  `@pytest.mark.skipif(not gym_spaces.GYMNASIUM_AVAILABLE, reason=...)`
+  decorator on `TestSpacesAdapter` itself, which only skips that one class's
+  4 tests and leaves the other 42 tests in the file completely unaffected
+  either way.
+**Verified locally both ways** (uninstalling/reinstalling `gymnasium` to
+match CI's actual `.[test]`-only install):
+ 
+| Environment | Result |
+|---|---|
+| `pip install -e ".[test]"` only (matches CI) | `42 passed, 4 skipped` |
+| `pip install -e ".[test,rl]"` | `46 passed` |
+ 
+Lesson for future test files in this repo: prefer `pytest.importorskip` only
+for modules that **themselves** hard-fail to import without the optional
+dependency; for modules using this repo's lazy/optional-import pattern
+(`qco.modules.gnn_cancellation.model`, `qco.modules.rl_scheduler.spaces`),
+check an explicit `SOMETHING_AVAILABLE` flag with a class- or
+function-scoped `skipif` instead, never a module-level skip unless the
+*entire file* is meant to be conditional on that one dependency.
+
+## 7. Files added / changed
 
 | File | Status | Purpose |
 |---|---|---|
