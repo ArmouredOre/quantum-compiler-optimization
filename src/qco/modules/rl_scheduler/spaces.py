@@ -26,11 +26,13 @@ from dataclasses import dataclass
 try:
     import numpy as np
     import gymnasium as gym
-    from gymnasium import spaces as gym_spaces
+    from gymnasium import spaces as _gym_spaces_module
+    GYMNASIUM_AVAILABLE = True
 except ImportError:  # pragma: no cover - CI installs only ``.[test]``
     np = None  # type: ignore[assignment]
     gym = None  # type: ignore[assignment]
-    gym_spaces = None  # type: ignore[assignment]
+    _gym_spaces_module = None  # type: ignore[assignment]
+    GYMNASIUM_AVAILABLE = False
 
 from qco.modules.rl_scheduler.environment import Action, ActionKind
 
@@ -48,7 +50,7 @@ _NUM_KINDS = len(ActionKind)
 
 
 def _require_gym() -> None:
-    if gym_spaces is None:
+    if _gym_spaces_module is None:
         raise ImportError(_RL_EXTRA)
 
 
@@ -80,11 +82,11 @@ def make_observation_space(max_gates: int = 512):
     Sprint 2 training-script concern).
     """
     _require_gym()
-    return gym_spaces.Dict(
+    return _gym_spaces_module.Dict(
         {
-            "gate_features": gym_spaces.Box(low=-1.0, high=float("inf"), shape=(max_gates, GATE_FEATURE_DIM), dtype=np.float32),
-            "gate_mask": gym_spaces.Box(low=0.0, high=1.0, shape=(max_gates,), dtype=np.float32),
-            "globals": gym_spaces.Box(low=0.0, high=float("inf"), shape=(3,), dtype=np.float32),
+            "gate_features": _gym_spaces_module.Box(low=-1.0, high=float("inf"), shape=(max_gates, GATE_FEATURE_DIM), dtype=np.float32),
+            "gate_mask": _gym_spaces_module.Box(low=0.0, high=1.0, shape=(max_gates,), dtype=np.float32),
+            "globals": _gym_spaces_module.Box(low=0.0, high=float("inf"), shape=(3,), dtype=np.float32),
         }
     )
 
@@ -101,7 +103,7 @@ def make_action_space(max_gates: int = 512):
     bounds.
     """
     _require_gym()
-    return gym_spaces.MultiDiscrete([_NUM_KINDS, max_gates, max_gates])
+    return _gym_spaces_module.MultiDiscrete([_NUM_KINDS, max_gates, max_gates])
 
 
 def decode_action(raw, legal_actions: list[Action]) -> Action:

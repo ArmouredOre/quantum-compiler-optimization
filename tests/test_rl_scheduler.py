@@ -325,12 +325,21 @@ class TestRewardWeights:
 # spaces.py — fixed-size SB3 adapter (skipped without the `rl` extra)
 # ---------------------------------------------------------------------------
 
-gym_spaces = pytest.importorskip(
-    "qco.modules.rl_scheduler.spaces",
-    reason="gymnasium (the `rl` extra) is not installed",
-)
+import qco.modules.rl_scheduler.spaces as gym_spaces
+
+# NOTE: this must be a class-level skip, not a module-level
+# ``pytest.skip(allow_module_level=True)`` where the latter skips every test in
+# this file (including all the rewrite/environment tests above), not just
+# the spaces-adapter tests below, because a module-level skip aborts
+# collection of the whole module. ``spaces.py`` itself imports cleanly
+# without gymnasium installed (it degrades gracefully, see its module
+# docstring) — only *using* its gym-dependent functions raises ImportError —
+# so the module-level ``gym_spaces.gym_spaces is None`` check that used to
+# live here never even got a chance to look at the right thing.
+_HAS_GYMNASIUM = gym_spaces.GYMNASIUM_AVAILABLE
 
 
+@pytest.mark.skipif(not _HAS_GYMNASIUM, reason="gymnasium (the `rl` extra) is not installed")
 class TestSpacesAdapter:
     def test_observation_space_shapes(self):
         space = gym_spaces.make_observation_space(max_gates=32)
