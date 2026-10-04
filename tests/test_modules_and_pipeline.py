@@ -1,6 +1,7 @@
 """Phase 2 smoke tests: modules A-D, equivalence checker, end-to-end pipeline."""
 
 import math
+import random
 
 from qco.ir import IntermediateRepresentation
 from qco.modules.rl_scheduler import RLScheduler
@@ -10,6 +11,7 @@ from qco.modules.evolutionary.nsga2 import (
     NSGA2Compiler,
     NSGA2Config,
     dominates,
+    mutate_validity_preserving,
     structure_aware_fidelity_surrogate,
 )
 from qco.evaluation.metrics import gate_count_reduction, scalarized_reward
@@ -69,6 +71,30 @@ def test_nsga2_genetic_search_finds_non_dominated_front():
     )
     # search should never end up worse than the seed it started from
     assert min(p.objective.gate_count for p in front) <= seed.gate_count()
+
+
+def test_mutation_operators_never_emit_an_invalid_circuit():
+    # commute / drop-candidate / reorder are equivalence-preserving by
+    # construction (Module B's gates_commute / rule_based_candidates, issues
+    # #6 and #11, closed). Crossover is excluded from this claim - splicing
+    # two different circuits together fundamentally isn't equivalence-
+    # preserving, which is why the pipeline still re-verifies NSGA-II's front
+    # before returning it (see test_pipeline_end_to_end_qft_like below).
+    checker = EquivalenceChecker()
+    rng = random.Random(7)
+
+    ghz = IntermediateRepresentation(4, name="ghz4")
+    ghz.add("h", [0]).add("cx", [0, 1]).add("cx", [1, 2]).add("cx", [2, 3])
+
+    mix = IntermediateRepresentation(3, name="mix")
+    mix.add("h", [0]).add("h", [0]).add("cx", [0, 1]).add("cx", [0, 1])
+    mix.add("rz", [2], [math.pi / 4]).add("rz", [2], [-math.pi / 4])
+
+    for base in (_hh_circuit(), ghz, mix):
+        current = base.copy()
+        for _ in range(25):
+            current = mutate_validity_preserving(current, rng)
+            assert checker.check(base, current).equivalent
 
 
 def test_nsga2_falls_back_without_pymoo(monkeypatch):
