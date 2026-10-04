@@ -285,8 +285,48 @@ def circuit_unitary(ir: IntermediateRepresentation) -> list[list[Complex]]:
     # Optimized pure-Python in-place fallback
     u = [[1j * 0 if i != j else 1 + 0j for j in range(dim)] for i in range(dim)]
     for g in ir.gates:
-        layer = _gate_on_register(g, n)
-        u = _matmul(layer, u)
+        if len(g.qubits) == 1:
+            mat = _one_qubit(g.name, g.params)
+            target = g.qubits[0]
+            bit = 1 << target
+            m00, m01 = mat[0]
+            m10, m11 = mat[1]
+            for base in range(0, dim, 2 * bit):
+                for offset in range(bit):
+                    r0 = base + offset
+                    r1 = r0 + bit
+                    row0 = u[r0]
+                    row1 = u[r1]
+                    u[r0] = [m00 * a + m01 * b for a, b in zip(row0, row1)]
+                    u[r1] = [m10 * a + m11 * b for a, b in zip(row0, row1)]
+        elif g.name == "cx":
+            c_bit = 1 << g.qubits[0]
+            t_bit = 1 << g.qubits[1]
+            for base in range(dim):
+                if (base & c_bit) and not (base & t_bit):
+                    r0 = base
+                    r1 = base | t_bit
+                    u[r0], u[r1] = u[r1], u[r0]
+        elif g.name == "swap":
+            bit0 = 1 << g.qubits[0]
+            bit1 = 1 << g.qubits[1]
+            for base in range(dim):
+                if (base & bit0) and not (base & bit1):
+                    r0 = base
+                    r1 = (base & ~bit0) | bit1
+                    u[r0], u[r1] = u[r1], u[r0]
+        elif g.name == "ccx":
+            c1_bit = 1 << g.qubits[0]
+            c2_bit = 1 << g.qubits[1]
+            t_bit = 1 << g.qubits[2]
+            for base in range(dim):
+                if (base & c1_bit) and (base & c2_bit) and not (base & t_bit):
+                    r0 = base
+                    r1 = base | t_bit
+                    u[r0], u[r1] = u[r1], u[r0]
+        else:
+            layer = _gate_on_register(g, n)
+            u = _matmul(layer, u)
     return u
 
 
@@ -324,10 +364,16 @@ class EquivalenceChecker:
             return EquivalenceResult(bool(ok), "numeric", "" if ok else "unitaries differ")
 
         # Pure-Python path
-        pivot = max(
-            ((i, j) for i in range(dim) for j in range(dim)),
-            key=lambda x: abs(ua[x[0]][x[1]])
-        )
+        max_val = -1.0
+        pivot = (0, 0)
+        for r in range(dim):
+            ua_r = ua[r]
+            for c in range(dim):
+                val = abs(ua_r[c])
+                if val > max_val:
+                    max_val = val
+                    pivot = (r, c)
+
         i, j = pivot
         pivot_val_a = ua[i][j]
         pivot_val_b = ub[i][j]

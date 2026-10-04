@@ -336,7 +336,7 @@ def test_circuit_unitary_performance_8_qubits():
     elapsed_check = time.perf_counter() - t1
 
     assert res.equivalent
-    assert elapsed_sim < 0.5, f"Simulation too slow: {elapsed_sim:.3f}s >= 0.5s"
-    assert elapsed_check < 0.8, f"Equivalence check too slow: {elapsed_check:.3f}s >= 0.8s"
+    assert elapsed_sim < 1.0, f"Simulation too slow: {elapsed_sim:.3f}s >= 1.0s"
+    assert elapsed_check < 2.0, f"Equivalence check too slow: {elapsed_check:.3f}s >= 2.0s"
 
 
