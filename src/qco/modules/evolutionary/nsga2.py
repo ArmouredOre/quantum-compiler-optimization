@@ -10,6 +10,14 @@ operators over variable-length gate sequences, plus fidelity surrogate v1
 Sprint-1 seeds-only non-dominated sort when pymoo isn't installed, same
 optional-dependency pattern as the other modules (fallback numeric checker,
 rule-based cancellation, ...).
+
+Mutation (commute / drop-candidate / reorder) is equivalence-preserving by
+construction, built on Module B's commutation/inverse-pair logic
+(``gates_commute`` / ``rule_based_candidates`` - issues #6 and #11, closed, so
+this is their finished Sprint 1+2 work, not a stand-in subject to rework).
+Crossover is deliberately NOT equivalence-preserving - splicing two different
+parents' gate sequences fundamentally isn't - which is why the pipeline still
+re-verifies the evolved front before returning it (see qco.pipeline).
 """
 
 from __future__ import annotations
@@ -18,7 +26,8 @@ import math
 import random
 from dataclasses import dataclass
 
-from qco.ir.intermediate_representation import ARITY, Gate, IntermediateRepresentation
+from qco.ir.intermediate_representation import Gate, IntermediateRepresentation
+from qco.modules.gnn_cancellation.features import gates_commute, rule_based_candidates
 
 try:
     import numpy as np
@@ -160,7 +169,6 @@ def structure_aware_fidelity_surrogate(
     e = error_rate or DEFAULT_ERROR_RATE
 
     frontier = [0.0] * circuit.num_qubits          # each qubit's busy-until time
-    layer_end = [0.0] * circuit.num_qubits          # kept only to detect same-layer 2q gates
     two_q_layer_count: dict[float, int] = {}
 
     fidelity = 1.0
@@ -189,21 +197,81 @@ def structure_aware_fidelity_surrogate(
 
 
 # --------------------------------------------------------------------------
+# Validity-preserving mutation ops (commute / drop-candidate / reorder).
+#
+# Each is equivalence-preserving *by construction*: commute and reorder only
+# ever swap gates ``gates_commute`` has confirmed commute, and drop-candidate
+# only ever removes a gate span ``rule_based_candidates`` has confirmed
+# multiplies to identity (inverse_pair / identity_chain - "rotation_merge" is
+# left alone since removing it changes the circuit, it needs replacement with
+# the merged rotation, not deletion). Neither pymoo-specific - usable and
+# testable on their own.
+# --------------------------------------------------------------------------
+
+def _legal_commute_swaps(gates: list[Gate]) -> list[int]:
+    """Indices ``i`` where ``gates[i]``/``gates[i+1]`` can swap in place."""
+    return [i for i in range(len(gates) - 1) if gates_commute(gates[i], gates[i + 1])]
+
+
+def _reorder_gates(gates: list[Gate], rng: random.Random) -> list[Gate]:
+    """Slide one gate a few positions earlier/later via chained legal commute
+    swaps, stopping as soon as a hop isn't legal (may end up a no-op)."""
+    if len(gates) < 2:
+        return gates
+    gates = list(gates)
+    pos = rng.randrange(len(gates))
+    direction = rng.choice((-1, 1))
+    for _ in range(rng.randint(1, 3)):
+        j = pos + direction
+        if not (0 <= j < len(gates)):
+            break
+        left, right = (pos, j) if direction == 1 else (j, pos)
+        if not gates_commute(gates[left], gates[right]):
+            break
+        gates[pos], gates[j] = gates[j], gates[pos]
+        pos = j
+    return gates
+
+
+def mutate_validity_preserving(
+    circuit: IntermediateRepresentation, rng: random.Random | None = None
+) -> IntermediateRepresentation:
+    """Apply one random commute / drop-candidate / reorder op, or return the
+    circuit unchanged if none currently applies (e.g. a 1-gate circuit)."""
+    rng = rng or random.Random()
+    gates = list(circuit.gates)
+    commute_points = _legal_commute_swaps(gates)
+    droppable = [c for c in rule_based_candidates(circuit) if c.kind in ("inverse_pair", "identity_chain")]
+
+    ops = []
+    if commute_points:
+        ops += ["commute", "reorder"]
+    if droppable:
+        ops.append("drop_candidate")
+    if not ops:
+        return circuit
+
+    op = rng.choice(ops)
+    if op == "commute":
+        i = rng.choice(commute_points)
+        gates[i], gates[i + 1] = gates[i + 1], gates[i]
+    elif op == "reorder":
+        gates = _reorder_gates(gates, rng)
+    else:
+        drop = set(rng.choice(droppable).gate_indices)
+        gates = [g for idx, g in enumerate(gates) if idx not in drop]
+
+    mutated = circuit.copy()
+    mutated.gates = gates
+    return mutated
+
+
+# --------------------------------------------------------------------------
 # pymoo plumbing: variable-length gate-sequence genome as an object-dtype
 # "single variable" (pymoo's standard trick for non-array representations).
 # --------------------------------------------------------------------------
 
 if _HAVE_PYMOO:
-
-    _PARAM_GATES = {"rx", "ry", "rz", "p", "cp", "crx", "cry", "crz", "rzz", "rxx"}
-
-    def _random_gate(num_qubits: int, rng: random.Random) -> Gate:
-        choices = [n for n, arity in ARITY.items() if arity <= num_qubits]
-        name = rng.choice(choices)
-        arity = ARITY[name]
-        qubits = tuple(rng.sample(range(num_qubits), arity))
-        params = (rng.uniform(0, 6.283185307),) if name in _PARAM_GATES else ()
-        return Gate(name=name, qubits=qubits, params=params)
 
     class _CircuitProblem(ElementwiseProblem):
         def __init__(self, fidelity_surrogate):
@@ -256,7 +324,8 @@ if _HAVE_PYMOO:
             return Y
 
     class _GateSequenceMutation(Mutation):
-        """Random insert / delete / swap over one circuit's gate list."""
+        """Random commute / drop-candidate / reorder over one circuit's gate
+        list - see ``mutate_validity_preserving`` above."""
 
         def __init__(self, prob: float):
             super().__init__(prob=prob)
@@ -267,17 +336,5 @@ if _HAVE_PYMOO:
             # unconditionally.
             rng = random.Random()
             for i in range(len(X)):
-                circuit: IntermediateRepresentation = X[i, 0]
-                gates = list(circuit.gates)
-                op = rng.choice(("delete", "insert", "swap"))
-                if op == "delete" and gates:
-                    gates.pop(rng.randrange(len(gates)))
-                elif op == "insert" and circuit.num_qubits:
-                    gates.insert(rng.randrange(len(gates) + 1), _random_gate(circuit.num_qubits, rng))
-                elif op == "swap" and len(gates) >= 2:
-                    a, b = rng.sample(range(len(gates)), 2)
-                    gates[a], gates[b] = gates[b], gates[a]
-                mutated = circuit.copy()
-                mutated.gates = gates
-                X[i, 0] = mutated
+                X[i, 0] = mutate_validity_preserving(X[i, 0], rng)
             return X

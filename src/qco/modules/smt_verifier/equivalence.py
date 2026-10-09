@@ -346,6 +346,17 @@ def _to_z3_real(val_rounded: float):
     return _z3_module.RealVal(f"{frac.numerator}/{frac.denominator}")
 
 
+def _z3_val_to_float(val) -> float:
+    """Safely convert a Z3 Real model value (RatNumRef, AlgebraicNumRef) to Python float."""
+    if hasattr(val, "as_fraction"):
+        return float(val.as_fraction())
+    if hasattr(val, "approx"):
+        return float(val.approx(20).as_fraction())
+    if hasattr(val, "as_decimal"):
+        return float(val.as_decimal(15).rstrip("?"))
+    return float(str(val))
+
+
 def check_smt(
     ua: list[list[complex]],
     ub: list[list[complex]],
@@ -396,55 +407,73 @@ def check_smt(
             if abs(abs(row_a[j]) - abs(row_b[j])) > tol_norm:
                 return EquivalenceResult(False, "smt", "unitaries not equivalent (UNSAT)")
 
+    # Find pivot entry in ub with maximum amplitude
+    max_val = -1.0
+    pivot = (0, 0)
+    for i in range(dim):
+        row_b = ub[i]
+        for j in range(dim):
+            v = abs(row_b[j])
+            if v > max_val:
+                max_val = v
+                pivot = (i, j)
+
     # Declare real-valued phase variables: cos(phi) and sin(phi) with c^2+s^2=1
     c = _z3_module.Real("c")
     s = _z3_module.Real("s")
 
     solver = _z3_module.Solver()
     solver.set("timeout", int(timeout * 1000))
-
     solver.add(c * c + s * s == _z3_module.RealVal("1"))
 
     tol = _to_z3_real(round(atol, 8))
 
-    for i in range(dim):
-        row_a = ua[i]
-        row_b = ub[i]
-        for j in range(dim):
-            a = row_a[j]
-            b = row_b[j]
-            re_a, im_a = a.real, a.imag
-            re_b, im_b = b.real, b.imag
+    def _add_constraint(r: int, cl: int):
+        a_val = ua[r][cl]
+        b_val = ub[r][cl]
+        ra = _to_z3_real(round(a_val.real, 8))
+        ia = _to_z3_real(round(a_val.imag, 8))
+        rb = _to_z3_real(round(b_val.real, 8))
+        ib = _to_z3_real(round(b_val.imag, 8))
+        diff_re = ra - (c * rb - s * ib)
+        solver.add(_z3_module.And(diff_re >= -tol, diff_re <= tol))
+        diff_im = ia - (c * ib + s * rb)
+        solver.add(_z3_module.And(diff_im >= -tol, diff_im <= tol))
 
-            # Skip entries where both matrices are essentially zero
-            if abs(re_a) < 1e-12 and abs(im_a) < 1e-12 and abs(re_b) < 1e-12 and abs(im_b) < 1e-12:
-                continue
+    # Add pivot constraint
+    _add_constraint(pivot[0], pivot[1])
 
-            ra = _to_z3_real(round(re_a, 8))
-            ia = _to_z3_real(round(im_a, 8))
-            rb = _to_z3_real(round(re_b, 8))
-            ib = _to_z3_real(round(im_b, 8))
+    # Counterexample-guided refinement loop (CEGAR)
+    while True:
+        status = solver.check()
+        if status == _z3_module.unsat:
+            return EquivalenceResult(False, "smt", "unitaries not equivalent (UNSAT)")
+        elif status != _z3_module.sat:
+            return EquivalenceResult(False, "smt", "SMT solver timeout/unknown")
 
-            # Re(ua) == c*Re(ub) - s*Im(ub)  within atol
-            diff_re = ra - (c * rb - s * ib)
-            solver.add(_z3_module.And(diff_re >= -tol, diff_re <= tol))
-
-            # Im(ua) == c*Im(ub) + s*Re(ub)  within atol
-            diff_im = ia - (c * ib + s * rb)
-            solver.add(_z3_module.And(diff_im >= -tol, diff_im <= tol))
-
-    result = solver.check()
-
-    if result == _z3_module.sat:
         model = solver.model()
-        c_val = float(model[c].as_fraction())
-        s_val = float(model[s].as_fraction())
-        phi = math.atan2(s_val, c_val)
-        return EquivalenceResult(True, "smt", f"global phase phi={phi:.6f} rad")
-    elif result == _z3_module.unsat:
-        return EquivalenceResult(False, "smt", "unitaries not equivalent (UNSAT)")
-    else:  # unknown / timeout
-        return EquivalenceResult(False, "smt", "SMT solver timeout/unknown")
+        c_val = _z3_val_to_float(model[c])
+        s_val = _z3_val_to_float(model[s])
+
+        # Check all entries against candidate model
+        ph_c = complex(c_val, s_val)
+        violated = None
+        for i in range(dim):
+            row_a = ua[i]
+            row_b = ub[i]
+            for j in range(dim):
+                if abs(row_a[j] - ph_c * row_b[j]) > max(atol * 5, 1e-4):
+                    violated = (i, j)
+                    break
+            if violated is not None:
+                break
+
+        if violated is None:
+            phi = math.atan2(s_val, c_val)
+            return EquivalenceResult(True, "smt", f"global phase phi={phi:.6f} rad")
+
+        # Refine: add constraint for the violated entry
+        _add_constraint(violated[0], violated[1])
 
 
 class EquivalenceChecker:
