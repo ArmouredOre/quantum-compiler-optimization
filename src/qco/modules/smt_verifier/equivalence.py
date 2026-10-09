@@ -493,6 +493,8 @@ class EquivalenceChecker:
 
     def _use_smt(self, original: "IntermediateRepresentation", rewrite: "IntermediateRepresentation") -> bool:
         """Decide whether to route to the SMT path under 'auto' backend."""
+        if not _HAS_Z3:
+            return False
         n = original.num_qubits
         total_gates = len(original.gates) + len(rewrite.gates)
         # Prefer numeric for small windows; SMT beyond
