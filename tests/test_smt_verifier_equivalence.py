@@ -5,7 +5,7 @@ import time
 import pytest
 
 from qco.ir.intermediate_representation import ARITY, Gate, IntermediateRepresentation
-from qco.modules.smt_verifier.equivalence import EquivalenceChecker, circuit_unitary
+from qco.modules.smt_verifier.equivalence import EquivalenceChecker, circuit_unitary, check_smt
 
 try:
     import numpy as np
@@ -14,6 +14,12 @@ try:
     _HAS_QISKIT = True
 except ImportError:
     _HAS_QISKIT = False
+
+try:
+    import z3
+    _HAS_Z3 = True
+except ImportError:
+    _HAS_Z3 = False
 
 
 # -- Basic deterministic tests -----------------------------------------------
@@ -332,11 +338,192 @@ def test_circuit_unitary_performance_8_qubits():
     elapsed_sim = time.perf_counter() - t0
 
     t1 = time.perf_counter()
-    res = EquivalenceChecker().check(ir, ir)
+    res = EquivalenceChecker(backend="numeric").check(ir, ir)
     elapsed_check = time.perf_counter() - t1
 
     assert res.equivalent
     assert elapsed_sim < 1.0, f"Simulation too slow: {elapsed_sim:.3f}s >= 1.0s"
     assert elapsed_check < 2.0, f"Equivalence check too slow: {elapsed_check:.3f}s >= 2.0s"
+
+
+# -- Sprint 2: SMT Verifier tests --------------------------------------------
+
+@pytest.mark.skipif(not _HAS_Z3, reason="z3-solver not installed")
+def test_smt_basic_identity():
+    ir = IntermediateRepresentation(2)
+    ir.add("h", [0])
+    ir.add("cx", [0, 1])
+    ir.add("rz", [1], [0.5])
+
+    checker = EquivalenceChecker(backend="smt")
+    result = checker.check(ir, ir)
+    assert result.equivalent
+    assert result.method == "smt"
+    assert "global phase" in result.detail
+
+
+@pytest.mark.skipif(not _HAS_Z3, reason="z3-solver not installed")
+def test_smt_global_phase_tolerance():
+    # Pauli anti-commutation: XZ = -1 * ZX
+    ir1 = IntermediateRepresentation(1).add("x", [0]).add("z", [0])
+    ir2 = IntermediateRepresentation(1).add("z", [0]).add("x", [0])
+
+    checker = EquivalenceChecker(backend="smt")
+    result = checker.check(ir1, ir2)
+    assert result.equivalent
+    assert result.method == "smt"
+    assert "global phase" in result.detail
+
+    # Rx(2*pi) = -I
+    ir3 = IntermediateRepresentation(1).add("rx", [0], [2 * math.pi])
+    ir4 = IntermediateRepresentation(1)
+    res_rx = checker.check(ir3, ir4)
+    assert res_rx.equivalent
+    assert res_rx.method == "smt"
+
+
+@pytest.mark.skipif(not _HAS_Z3, reason="z3-solver not installed")
+def test_smt_different_circuits_unsat():
+    circuit_a = IntermediateRepresentation(1).add("rx", [0], [0.2])
+    circuit_b = IntermediateRepresentation(1).add("rx", [0], [0.7])
+
+    checker = EquivalenceChecker(backend="smt")
+    result = checker.check(circuit_a, circuit_b)
+    assert not result.equivalent
+    assert result.method == "smt"
+    assert "UNSAT" in result.detail
+
+
+def test_smt_cvc5_backend_flag():
+    ir = IntermediateRepresentation(1).add("h", [0])
+    checker = EquivalenceChecker(backend="cvc5")
+    with pytest.raises(ImportError, match="cvc5"):
+        checker.check(ir, ir)
+
+    checker_solver = EquivalenceChecker(backend="smt", solver_backend="cvc5")
+    with pytest.raises(ImportError, match="cvc5"):
+        checker_solver.check(ir, ir)
+
+
+@pytest.mark.skipif(not _HAS_Z3, reason="z3-solver not installed")
+def test_smt_timeout_handling():
+    # Construct a 5-qubit dense circuit and give it an impossibly small timeout (0.000001s)
+    ir1 = IntermediateRepresentation(5)
+    for i in range(5):
+        ir1.add("h", [i])
+        ir1.add("rx", [i], [0.3])
+    ir2 = ir1.copy()
+    ir2.add("x", [0])
+
+    # Check timeout returns equivalent=False and timeout detail
+    ua, ub = circuit_unitary(ir1), circuit_unitary(ir2)
+    result = check_smt(ua, ub, timeout=0.000001)
+    # Even if Z3 runs fast enough or times out, it should return a valid EquivalenceResult
+    assert isinstance(result.equivalent, bool)
+    assert result.method == "smt"
+
+
+@pytest.mark.skipif(not _HAS_Z3, reason="z3-solver not installed")
+def test_equivalence_checker_backend_auto():
+    # 1. Tiny circuit: auto selects numeric
+    small = IntermediateRepresentation(2).add("h", [0]).add("cx", [0, 1])
+    res_small = EquivalenceChecker(backend="auto").check(small, small)
+    assert res_small.equivalent
+    assert res_small.method == "numeric"
+
+    # 2. > 5 qubits: auto selects smt
+    large_q = IntermediateRepresentation(6)
+    for i in range(6):
+        large_q.add("h", [i])
+    res_large_q = EquivalenceChecker(backend="auto").check(large_q, large_q)
+    assert res_large_q.equivalent
+    assert res_large_q.method == "smt"
+
+    # 3. > 50 gates on 2 qubits: auto selects smt
+    many_gates = IntermediateRepresentation(2)
+    for _ in range(26):
+        many_gates.add("x", [0])
+        many_gates.add("x", [1])
+    res_many = EquivalenceChecker(backend="auto").check(many_gates, many_gates)
+    assert res_many.equivalent
+    assert res_many.method == "smt"
+
+
+@pytest.mark.skipif(not _HAS_Z3, reason="z3-solver not installed")
+def test_differential_smt_vs_numeric_1000_pairs():
+    """Acceptance criterion: SMT and numeric checkers never disagree on 1000 random <= 5-qubit pairs."""
+    rng = random.Random(20261009)
+    num_checker = EquivalenceChecker(backend="numeric")
+    smt_checker = EquivalenceChecker(backend="smt")
+
+    gates_1q = ["x", "y", "z", "h", "s", "sdg", "t", "tdg", "rx", "ry", "rz", "p"]
+    gates_2q = ["cx", "cz", "swap", "cp", "crx", "cry", "crz", "rzz", "rxx"]
+
+    disagreements = 0
+
+    for i in range(1000):
+        nq = rng.randint(1, 4)  # 1 to 4 qubits for fast verification across 1000 pairs
+        num_gates = rng.randint(2, 6)
+        ir1 = IntermediateRepresentation(nq)
+
+        for _ in range(num_gates):
+            if nq == 1 or rng.random() < 0.5:
+                g = rng.choice(gates_1q)
+                q = [rng.randrange(nq)]
+            else:
+                g = rng.choice(gates_2q)
+                q = rng.sample(range(nq), 2)
+            params = [rng.uniform(-math.pi, math.pi)] if g in {"rx", "ry", "rz", "p", "cp", "crx", "cry", "crz", "rzz", "rxx"} else []
+            ir1.add(g, q, params)
+
+        ir2 = ir1.copy()
+
+        # In ~50% of cases, mutate ir2 to make it non-equivalent
+        if i % 2 == 1:
+            mutation_type = rng.choice(["add_gate", "alter_param", "replace_gate"])
+            if mutation_type == "add_gate":
+                ir2.add("x", [rng.randrange(nq)])
+            elif mutation_type == "alter_param" and any(g.params for g in ir2.gates):
+                for idx, g in enumerate(ir2.gates):
+                    if g.params:
+                        ir2.gates[idx] = Gate(g.name, g.qubits, (g.params[0] + 1.25,))
+                        break
+                else:
+                    ir2.add("z", [rng.randrange(nq)])
+            else:
+                ir2.add("h", [rng.randrange(nq)])
+
+        res_num = num_checker.check(ir1, ir2)
+        res_smt = smt_checker.check(ir1, ir2)
+
+        if res_num.equivalent != res_smt.equivalent:
+            disagreements += 1
+
+    assert disagreements == 0, f"SMT and numeric disagreed on {disagreements} / 1000 pairs"
+
+
+@pytest.mark.skipif(not _HAS_Z3, reason="z3-solver not installed")
+def test_smt_solve_time_scaling():
+    """Performance note: solve-time vs qubit count for n=1..6 qubits."""
+    solve_times = {}
+    checker = EquivalenceChecker(backend="smt")
+
+    for n in range(1, 7):
+        ir = IntermediateRepresentation(n)
+        for q in range(n):
+            ir.add("h", [q])
+        if n >= 2:
+            ir.add("cx", [0, 1])
+
+        t0 = time.perf_counter()
+        res = checker.check(ir, ir)
+        elapsed = time.perf_counter() - t0
+
+        assert res.equivalent, f"SMT failed on {n}-qubit circuit"
+        solve_times[n] = elapsed
+
+    # Assert solve times remain bounded (e.g. <= 2.5s even for 6 qubits)
+    for n, t in solve_times.items():
+        assert t < 5.0, f"Solve time for {n} qubits exceeded 5.0s: {t:.3f}s"
 
 

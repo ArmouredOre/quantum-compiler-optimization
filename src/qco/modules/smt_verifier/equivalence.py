@@ -17,8 +17,10 @@ windows and for the test-suite ground truth.
 from __future__ import annotations
 
 import cmath
+import functools
 import math
 from dataclasses import dataclass
+from fractions import Fraction
 
 try:
     import numpy as np
@@ -26,6 +28,13 @@ try:
 except ImportError:  # pragma: no cover
     np = None  # type: ignore
     _HAS_NUMPY = False
+
+try:
+    import z3 as _z3_module
+    _HAS_Z3 = True
+except ImportError:  # pragma: no cover
+    _z3_module = None  # type: ignore
+    _HAS_Z3 = False
 
 from qco.ir.intermediate_representation import IntermediateRepresentation
 
@@ -330,17 +339,154 @@ def circuit_unitary(ir: IntermediateRepresentation) -> list[list[Complex]]:
     return u
 
 
+@functools.lru_cache(maxsize=4096)
+def _to_z3_real(val_rounded: float):
+    """Convert a rounded float to an exact Z3 RealVal via rational approximation."""
+    frac = Fraction(val_rounded).limit_denominator(1_000_000)
+    return _z3_module.RealVal(f"{frac.numerator}/{frac.denominator}")
+
+
+def check_smt(
+    ua: list[list[complex]],
+    ub: list[list[complex]],
+    *,
+    atol: float = 1e-6,
+    timeout: float = 5.0,
+    solver_backend: str = "z3",
+) -> EquivalenceResult:
+    """Check whether ``ua == e^{i*phi} * ub`` for some global phase using Z3.
+
+    Returns an :class:`EquivalenceResult` with ``method="smt"``.
+
+    Raises
+    ------
+    ImportError
+        If Z3 (or CVC5) is not installed.
+    RuntimeError
+        If an unsupported ``solver_backend`` is requested.
+    """
+    if solver_backend == "cvc5":
+        try:
+            import cvc5  # noqa: F401  # pragma: no cover
+        except ImportError:
+            raise ImportError(
+                "cvc5 Python bindings are not installed. "
+                "Install with: pip install cvc5"
+            )
+        raise RuntimeError(  # pragma: no cover
+            "CVC5 backend is not yet implemented; use solver_backend='z3'."
+        )
+
+    if not _HAS_Z3:
+        raise ImportError(
+            "z3-solver is not installed. "
+            "Install with: pip install 'qco[smt]' or pip install z3-solver"
+        )
+
+    dim = len(ua)
+
+    # Fast invariant check: |U_a[i][j]| must equal |U_b[i][j]| up to tolerance
+    # because |e^{i*phi} * z| == |z|. If any entry norm violates this,
+    # the unitaries cannot be equivalent under any global phase.
+    tol_norm = max(atol * 5, 1e-4)
+    for i in range(dim):
+        row_a = ua[i]
+        row_b = ub[i]
+        for j in range(dim):
+            if abs(abs(row_a[j]) - abs(row_b[j])) > tol_norm:
+                return EquivalenceResult(False, "smt", "unitaries not equivalent (UNSAT)")
+
+    # Declare real-valued phase variables: cos(phi) and sin(phi) with c^2+s^2=1
+    c = _z3_module.Real("c")
+    s = _z3_module.Real("s")
+
+    solver = _z3_module.Solver()
+    solver.set("timeout", int(timeout * 1000))
+
+    solver.add(c * c + s * s == _z3_module.RealVal("1"))
+
+    tol = _to_z3_real(round(atol, 8))
+
+    for i in range(dim):
+        row_a = ua[i]
+        row_b = ub[i]
+        for j in range(dim):
+            a = row_a[j]
+            b = row_b[j]
+            re_a, im_a = a.real, a.imag
+            re_b, im_b = b.real, b.imag
+
+            # Skip entries where both matrices are essentially zero
+            if abs(re_a) < 1e-12 and abs(im_a) < 1e-12 and abs(re_b) < 1e-12 and abs(im_b) < 1e-12:
+                continue
+
+            ra = _to_z3_real(round(re_a, 8))
+            ia = _to_z3_real(round(im_a, 8))
+            rb = _to_z3_real(round(re_b, 8))
+            ib = _to_z3_real(round(im_b, 8))
+
+            # Re(ua) == c*Re(ub) - s*Im(ub)  within atol
+            diff_re = ra - (c * rb - s * ib)
+            solver.add(_z3_module.And(diff_re >= -tol, diff_re <= tol))
+
+            # Im(ua) == c*Im(ub) + s*Re(ub)  within atol
+            diff_im = ia - (c * ib + s * rb)
+            solver.add(_z3_module.And(diff_im >= -tol, diff_im <= tol))
+
+    result = solver.check()
+
+    if result == _z3_module.sat:
+        model = solver.model()
+        c_val = float(model[c].as_fraction())
+        s_val = float(model[s].as_fraction())
+        phi = math.atan2(s_val, c_val)
+        return EquivalenceResult(True, "smt", f"global phase phi={phi:.6f} rad")
+    elif result == _z3_module.unsat:
+        return EquivalenceResult(False, "smt", "unitaries not equivalent (UNSAT)")
+    else:  # unknown / timeout
+        return EquivalenceResult(False, "smt", "SMT solver timeout/unknown")
+
+
 class EquivalenceChecker:
-    def __init__(self, backend: str = "auto", atol: float = 1e-8, rtol: float = 1e-5):
+    def __init__(
+        self,
+        backend: str = "auto",
+        atol: float = 1e-8,
+        rtol: float = 1e-5,
+        timeout: float = 5.0,
+        solver_backend: str = "z3",
+    ):
         self.backend = backend
         self.atol = atol
         self.rtol = rtol
+        self.timeout = timeout
+        self.solver_backend = solver_backend
 
-    def check(self, original: IntermediateRepresentation, rewrite: IntermediateRepresentation) -> EquivalenceResult:
-        if self.backend in ("smt", "z3", "cvc5"):  # pragma: no cover - Phase 3
-            raise NotImplementedError("SMT equivalence encoding lands in Phase 3 (Sahib Singh)")
+    def _use_smt(self, original: "IntermediateRepresentation", rewrite: "IntermediateRepresentation") -> bool:
+        """Decide whether to route to the SMT path under 'auto' backend."""
+        n = original.num_qubits
+        total_gates = len(original.gates) + len(rewrite.gates)
+        # Prefer numeric for small windows; SMT beyond
+        return n > 5 or total_gates > 50
+
+    def check(self, original: "IntermediateRepresentation", rewrite: "IntermediateRepresentation") -> EquivalenceResult:
         if original.num_qubits != rewrite.num_qubits:
             return EquivalenceResult(False, "numeric", "qubit count differs")
+
+        # Determine effective backend
+        backend = self.backend
+        if backend == "auto":
+            backend = "smt" if self._use_smt(original, rewrite) else "numeric"
+
+        if backend in ("smt", "z3", "cvc5"):
+            ua = circuit_unitary(original)
+            ub = circuit_unitary(rewrite)
+            return check_smt(
+                ua, ub,
+                atol=max(self.atol, 1e-6),  # SMT uses looser tolerance due to rational approximation
+                timeout=self.timeout,
+                solver_backend=self.solver_backend if backend == "smt" else backend,
+            )
         ua, ub = circuit_unitary(original), circuit_unitary(rewrite)
         dim = len(ua)
 
