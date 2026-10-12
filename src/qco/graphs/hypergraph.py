@@ -37,28 +37,49 @@ class QubitHypergraph:
         return "\n".join(lines) + "\n"
 
 
+# Hyperedge weight = gate cost in CX-equivalents (standard decompositions), so
+# the partitioner avoids cutting the expensive interactions first.
+_CX_COST = {"swap": 3, "rxx": 2, "ryy": 2, "rzz": 2, "ccx": 6, "cswap": 8}
+
+
+def gate_cost(name: str) -> int:
+    return _CX_COST.get(name, 1)
+
+
 def build_hypergraph(ir: IntermediateRepresentation, window: int | None = None) -> QubitHypergraph:
     """Build the qubit-interaction hypergraph.
 
-    If ``window`` is given, multi-qubit gates within a sliding window of that many
-    gates are merged into a single hyperedge (coarser coupling, fewer edges).
+    Each multi-qubit gate contributes its qubit set with weight ``gate_cost``;
+    identical qubit sets are merged and their weights summed. If ``window`` is
+    given, multi-qubit gates within each window of that many gates are first
+    grouped by shared qubits (connected components), and each group becomes one
+    hyperedge: coarser coupling, fewer edges.
     """
-    hg = QubitHypergraph(num_qubits=ir.num_qubits)
+    weights: dict[frozenset[int], int] = {}
     if window is None:
-        for g in ir.gates:
-            if g.is_multi_qubit:
-                hg.add(frozenset(g.qubits))
-        return hg
-
-    bucket: set[int] = set()
-    count = 0
-    for g in ir.gates:
-        if g.is_multi_qubit:
-            bucket.update(g.qubits)
-        count += 1
-        if count >= window and bucket:
-            hg.add(frozenset(bucket), weight=len(bucket))
-            bucket, count = set(), 0
-    if bucket:
-        hg.add(frozenset(bucket), weight=len(bucket))
+        groups = [(frozenset(g.qubits), gate_cost(g.name)) for g in ir.gates if g.is_multi_qubit]
+    else:
+        groups = []
+        for start in range(0, len(ir.gates), window):
+            groups.extend(_interaction_groups(ir.gates[start : start + window]))
+    for qs, w in groups:
+        weights[qs] = weights.get(qs, 0) + w
+    hg = QubitHypergraph(num_qubits=ir.num_qubits)
+    for qs, w in weights.items():
+        hg.add(qs, w)
     return hg
+
+
+def _interaction_groups(gates) -> list[tuple[frozenset[int], int]]:
+    """Connected components (by shared qubits) of the multi-qubit gates."""
+    groups: list[tuple[set[int], int]] = []
+    for g in gates:
+        if not g.is_multi_qubit:
+            continue
+        qs, w = set(g.qubits), gate_cost(g.name)
+        for other in [grp for grp in groups if grp[0] & qs]:
+            groups.remove(other)
+            qs |= other[0]
+            w += other[1]
+        groups.append((qs, w))
+    return [(frozenset(qs), w) for qs, w in groups]
