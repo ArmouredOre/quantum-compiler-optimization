@@ -5,7 +5,15 @@ import time
 import pytest
 
 from qco.ir.intermediate_representation import ARITY, Gate, IntermediateRepresentation
-from qco.modules.smt_verifier.equivalence import EquivalenceChecker, circuit_unitary, check_smt
+from qco.modules.smt_verifier.equivalence import (
+    EquivalenceChecker,
+    EquivalenceResult,
+    apply_candidate_to_ir,
+    check_smt,
+    circuit_unitary,
+    verify_candidates,
+    verify_candidates_detailed,
+)
 
 try:
     import numpy as np
@@ -525,5 +533,143 @@ def test_smt_solve_time_scaling():
     # Assert solve times remain bounded (e.g. <= 2.5s even for 6 qubits)
     for n, t in solve_times.items():
         assert t < 5.0, f"Solve time for {n} qubits exceeded 5.0s: {t:.3f}s"
+
+
+# -- Sprint 3: Counterexample Extraction, Replay, and Verified-label API ------
+
+def test_counterexample_returned_on_failed_check_and_replays_numeric():
+    """Verify that failed checks return counterexample in detail and replay reproduces mismatch."""
+    c1 = IntermediateRepresentation(2)
+    c1.add("h", [0]).add("cx", [0, 1])
+
+    # Buggy rewrite: missing CX
+    c2 = IntermediateRepresentation(2)
+    c2.add("h", [0])
+
+    checker = EquivalenceChecker(backend="numeric")
+    result = checker.check(c1, c2)
+
+    assert not result.equivalent
+    assert "counterexample" in result.detail
+    assert "basis input" in result.detail
+    assert result.counterexample is not None
+
+    cx = result.counterexample
+    i, j = cx["entry"]
+    assert "basis_input" in cx
+    assert cx["basis_input"] == j
+
+    # Replay through circuit_unitary
+    u1 = circuit_unitary(c1)
+    u2 = circuit_unitary(c2)
+    assert abs(u1[i][j] - u2[i][j]) > 1e-4
+
+    # Using the EquivalenceResult helper replay methods
+    assert result.replay_on_unitaries(u1, u2)
+    assert result.replay(c1, c2)
+
+
+@pytest.mark.skipif(not _HAS_Z3, reason="z3-solver not installed")
+def test_counterexample_returned_on_failed_check_and_replays_smt():
+    """Verify that SMT UNSAT checks return counterexample in detail and replay reproduces mismatch."""
+    c1 = IntermediateRepresentation(2)
+    c1.add("x", [0]).add("z", [1])
+
+    c2 = IntermediateRepresentation(2)
+    c2.add("y", [0]).add("z", [1])
+
+    checker = EquivalenceChecker(backend="smt")
+    result = checker.check(c1, c2)
+
+    assert not result.equivalent
+    assert "counterexample" in result.detail
+    assert "UNSAT" in result.detail
+    assert result.counterexample is not None
+
+    cx = result.counterexample
+    i, j = cx["entry"]
+    u1 = circuit_unitary(c1)
+    u2 = circuit_unitary(c2)
+
+    assert result.replay_on_unitaries(u1, u2)
+    assert result.replay(c1, c2)
+
+
+def test_verify_candidates_api_for_m3():
+    """Test verified-label API with various candidate kinds."""
+    from qco.modules.gnn_cancellation.features import CancellationCandidate
+
+    # Circuit with a valid inverse pair (H H on q0) and a non-cancelling gate
+    ir = IntermediateRepresentation(2)
+    ir.add("h", [0]).add("h", [0]).add("x", [1])
+
+    valid_cand = CancellationCandidate(a=0, b=1, kind="inverse_pair", score=0.99)
+    # Invalid candidate proposing to cancel H at 0 and X at 2
+    invalid_cand = CancellationCandidate(a=0, b=2, kind="inverse_pair", score=0.40)
+
+    results = verify_candidates(ir, [valid_cand, invalid_cand])
+    assert len(results) == 2
+    assert results[0] == (valid_cand, True)
+    assert results[1] == (invalid_cand, False)
+
+    # Rotation merge candidate test
+    rot_ir = IntermediateRepresentation(1)
+    rot_ir.add("rx", [0], [0.3]).add("rx", [0], [0.5])
+    rot_cand = CancellationCandidate(a=0, b=1, kind="rotation_merge", indices=(0, 1))
+
+    rot_results = verify_candidates(rot_ir, [rot_cand])
+    assert len(rot_results) == 1
+    assert rot_results[0][1] is True
+
+
+def test_verify_candidates_on_all_benchmarks_under_8_qubits():
+    """Acceptance criteria: M3 can call verify_candidates on every benchmark <= 8 qubits."""
+    from pathlib import Path
+    from qco.ir.parser import from_qasm2
+    from qco.modules.gnn_cancellation.features import rule_based_candidates
+
+    benchmark_dir = Path("benchmarks/circuits")
+    tested_count = 0
+
+    for qasm_file in sorted(benchmark_dir.glob("*.qasm")):
+        ir = from_qasm2(qasm_file.read_text(encoding="utf-8"))
+        if ir.num_qubits <= 8:
+            candidates = rule_based_candidates(ir)
+            verified_labels = verify_candidates(ir, candidates)
+            assert isinstance(verified_labels, list)
+            assert len(verified_labels) == len(candidates)
+            for cand, is_verified in verified_labels:
+                assert isinstance(is_verified, bool)
+            tested_count += 1
+
+    assert tested_count >= 10, f"Expected at least 10 benchmarks <= 8 qubits, found {tested_count}"
+
+
+def test_pipeline_revert_protocol_rejects_and_restores():
+    """Verify that the pipeline revert protocol rejects invalid rewrites and restores pre-rewrite blocks."""
+    from qco.pipeline import HybridOptimizer, PipelineConfig
+
+    optimizer = HybridOptimizer(PipelineConfig(verify_rewrites=True))
+
+    orig = IntermediateRepresentation(2, name="orig").add("h", [0]).add("cx", [0, 1])
+    bad_rewrite = IntermediateRepresentation(2, name="bad").add("x", [0]).add("z", [1])
+    fallback = orig.copy()
+
+    restored, accepted, result = optimizer.revert_rewrite(
+        original=orig,
+        proposed=bad_rewrite,
+        fallback=fallback,
+        block_idx=0,
+        stage="test_verification",
+    )
+
+    assert not accepted
+    assert not result.equivalent
+    assert len(optimizer.revert_events) == 1
+    revert_event = optimizer.revert_events[0]
+    assert revert_event.stage == "test_verification"
+    assert revert_event.counterexample is not None
+    # Pre-rewrite block was preserved
+    assert restored.gate_count() == orig.gate_count()
 
 
