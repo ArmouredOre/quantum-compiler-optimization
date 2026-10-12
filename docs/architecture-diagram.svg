@@ -32,7 +32,7 @@
   <rect class="stage" x="330" y="118" width="300" height="66" rx="9"/>
   <text class="lbl" x="480" y="145" text-anchor="middle">Parser &amp; IR Builder</text>
   <text class="sub" x="480" y="165" text-anchor="middle">→ internal intermediate representation</text>
-  <text class="tag" x="480" y="180" text-anchor="middle">Ajay M · 24BCE2493</text>
+  <text class="tag" x="480" y="180" text-anchor="middle">Swaraj Rane · 24BCT0086</text>
 
   <!-- Stage 2 -->
   <text class="banner" x="70" y="228">STAGE 2 — GRAPH CONSTRUCTION</text>

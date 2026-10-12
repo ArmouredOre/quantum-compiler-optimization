@@ -2,7 +2,7 @@
 
 **Project:** Quantum Compiler Optimization — Gate Scheduling & Gate Cancellation
 **Team 2 · Review 1 · Phase 2 deliverable (Architecture Design)**
-**Team:** Ajay M (24BCE2493) · Maanas Nair (24BCT0157) · Prisha (24BDS0146) · Sahib Singh (24BCI0292) · Swaraj Rane (24BCT0086) — see [`work_distribution.md`](work_distribution.md)
+**Team:** Maanas Nair (24BCT0157) · Prisha (24BDS0146) · Sahib Singh (24BCI0292) · Swaraj Rane (24BCT0086) — see [`work_distribution.md`](work_distribution.md)
 
 ---
 
@@ -37,7 +37,7 @@ flowchart TD
     IN["Input circuit<br/>OpenQASM 2.0 / Qiskit / Cirq"]
 
     subgraph S1["Stage 1 — Front End"]
-        P["Parser &amp; IR Builder<br/><i>Ajay M</i>"]
+        P["Parser &amp; IR Builder<br/><i>Swaraj Rane</i>"]
     end
 
     subgraph S2["Stage 2 — Graph Construction"]
@@ -171,11 +171,10 @@ closed‑loop edge `EV --> MA`.
 
 | Module / Stage | Owner | Reg. No. |
 |----------------|-------|----------|
-| Stage 1–3: IR, DAG/Hypergraph, Partitioning & block scheduling | Ajay M | 24BCE2493 |
 | Stage 4 · Module A: RL adaptive gate scheduler | Maanas Nair | 24BCT0157 |
 | Stage 4 · Module B: GNN cancellation predictor | Prisha | 24BDS0146 |
 | Stage 4 · Module C: SAT/SMT verifier & bounded optimizer | Sahib Singh | 24BCI0292 |
-| Stage 5 · Module D: NSGA‑II search **+** Stage 6 evaluation engine **+** integration | Swaraj Rane | 24BCT0086 |
+| Stage 1–3: IR, DAG/Hypergraph, Partitioning & block scheduling **+** Stage 5 · Module D: NSGA‑II search **+** Stage 6 evaluation engine **+** integration | Swaraj Rane | 24BCT0086 |
 
 ---
 

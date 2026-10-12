@@ -6,11 +6,10 @@
 
 | Member | Name | Reg. No. | Role |
 |:------:|------|----------|------|
-| 1 | Ajay M | 24BCE2493 | Front‑End & Graph Infrastructure Lead · Lit‑review coordinator — `qco.ir`, `qco.graphs` |
 | 2 | Maanas Nair | 24BCT0157 | RL Engineer — Module A, `qco.modules.rl_scheduler` |
 | 3 | Prisha | 24BDS0146 | ML / Graph‑Learning Engineer — Module B, `qco.modules.gnn_cancellation` |
 | 4 | Sahib Singh | 24BCI0292 | Formal‑Methods Engineer — Module C, `qco.modules.smt_verifier` |
-| 5 | Swaraj Rane | 24BCT0086 | Integration & Evaluation Lead · Repo/CI/DevOps owner — Module D, `qco.evaluation`, `qco.pipeline` |
+| 5 | Swaraj Rane | 24BCT0086 | Integration & Evaluation Lead · Front‑End & Graph Infrastructure · Repo/CI/DevOps owner — Stages 1–3 (`qco.ir`, `qco.graphs`), Module D, `qco.evaluation`, `qco.pipeline` |
 
 Full responsibilities: [`docs/work_distribution.md`](docs/work_distribution.md).
 
@@ -83,7 +82,8 @@ GNN / SMT / EA stacks are only needed from Phase 3 onward.
 * [Literature survey](docs/phase1_literature_survey.md) — 4 sub‑topics + baseline
 * [Research gap](docs/research_gap.md)
 * [Evaluation parameters](docs/evaluation_parameters.md) — the 5 measured metrics
-* [Work distribution](docs/work_distribution.md) — 5 members, one module each
+* [Work distribution](docs/work_distribution.md) — 4 members, one module each (Stages 1–3 owned by Swaraj Rane)
 * [Project timeline](docs/project_timeline.md) — 6 phases / 3 reviews
 * [Sprint plan](docs/sprint_plan.md) — 6 sprints, per-member tasks, dependency ordering
+* [Novelty plan](docs/novelty_plan.md) — novelty additions and which member changes which code
 * [Phase 2 — environment setup](docs/phase2_environment_setup.md)

@@ -16,8 +16,8 @@ sys.path.insert(0, os.path.join(_ROOT, "src"))
 
 STACKS = {
     "core": ["yaml"],
-    "compiler (Ajay M / Swaraj Rane)": ["qiskit", "qiskit_aer", "cirq", "pytket"],
-    "graphs (Ajay M)": ["networkx"],
+    "compiler (Swaraj Rane)": ["qiskit", "qiskit_aer", "cirq", "pytket"],
+    "graphs (Swaraj Rane)": ["networkx"],
     "rl / Module A (Maanas Nair)": ["torch", "stable_baselines3", "gymnasium"],
     "gnn / Module B (Prisha)": ["torch", "torch_geometric"],
     "smt / Module C (Sahib Singh)": ["z3"],
