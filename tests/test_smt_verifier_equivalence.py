@@ -9,6 +9,8 @@ from qco.modules.smt_verifier.bounded_optimizer import (
     BoundedResynthesizer,
     ResynthConfig,
     ResynthOutcome,
+    ResynthResult,
+    canonical_window_form,
     resynthesize_window,
 )
 from qco.modules.smt_verifier.equivalence import (
@@ -835,6 +837,155 @@ def test_resynthesize_outcome_api_for_m3():
     assert outcome.gates_saved == 2
     assert outcome.circuit.gate_count() == 0
     assert outcome.optimality == "optimal"
+
+
+def test_m5_resynthesize_stable_interface_unpacking_and_attributes():
+    """Issue #33: Hand M5 a stable resynthesize(window) -> (ir, status, solve_s) interface."""
+    resynthesizer = BoundedResynthesizer(ResynthConfig(max_qubits=3, max_gates=8))
+    c = IntermediateRepresentation(2)
+    c.add("h", [1]).add("cx", [0, 1]).add("h", [1])
+
+    # Unpacking as 3-tuple: (ir, status, solve_s)
+    ir, status, solve_s = resynthesizer.resynthesize(c)
+    assert isinstance(ir, IntermediateRepresentation)
+    assert status == "optimal"
+    assert isinstance(solve_s, float)
+    assert solve_s >= 0.0
+    assert ir.gate_count() == 1
+    assert ir.gates[0].name == "cz"
+
+    # Dataclass attribute and index access
+    res = resynthesizer.resynthesize(c)
+    assert res.ir.gate_count() == 1
+    assert res.status == "optimal"
+    assert res.reduced is True
+    assert res.gates_saved == 2
+    assert res.from_cache is True
+    assert res.circuit is res.ir
+    assert len(res) == 3
+    assert res[0] is res.ir
+    assert res[1] == "optimal"
+    assert res[2] == res.solve_s
+
+
+def test_canonical_window_form_cache_hits_on_repeated_and_shifted_windows():
+    """Issue #33: Cache results keyed by canonical window form; repeated & shifted windows hit cache."""
+    resynthesizer = BoundedResynthesizer(ResynthConfig(max_qubits=4, max_gates=8))
+    checker = EquivalenceChecker(backend="numeric")
+
+    # 1. First window: H(1)-CX(0,1)-H(1) on 2 qubits
+    w1 = IntermediateRepresentation(2, name="w1")
+    w1.add("h", [1]).add("cx", [0, 1]).add("h", [1])
+
+    res1 = resynthesizer.resynthesize(w1)
+    assert not res1.from_cache
+    assert res1.reduced is True
+    assert res1.gates_saved == 2
+    assert res1.ir.gate_count() == 1
+    assert resynthesizer.cache_info()["hits"] == 0
+    assert resynthesizer.cache_info()["misses"] == 1
+
+    # 2. Repeated identical window: must hit cache immediately
+    res2 = resynthesizer.resynthesize(w1)
+    assert res2.from_cache is True
+    assert res2.solve_s == 0.0
+    assert res2.ir.gate_count() == 1
+    assert resynthesizer.cache_info()["hits"] == 1
+
+    # 3. Qubit-shifted window: H(3)-CX(2,3)-H(3) on 4 qubits -> canonical cache hit!
+    w3 = IntermediateRepresentation(4, name="w3")
+    w3.add("h", [3]).add("cx", [2, 3]).add("h", [3])
+
+    res3 = resynthesizer.resynthesize(w3)
+    assert res3.from_cache is True
+    assert res3.solve_s == 0.0
+    assert res3.ir.gate_count() == 1
+    assert res3.ir.num_qubits == 4
+    # The synthesized gate must be remapped to qubits (2, 3)!
+    assert res3.ir.gates[0].name == "cz"
+    assert res3.ir.gates[0].qubits == (2, 3)
+    assert resynthesizer.cache_info()["hits"] == 2
+    assert checker.check(w3, res3.ir).equivalent
+
+    # 4. Non-contiguous qubit-shifted window: H(5)-CX(1,5)-H(5) on 6 qubits
+    w4 = IntermediateRepresentation(6, name="w4")
+    w4.add("h", [5]).add("cx", [1, 5]).add("h", [5])
+
+    res4 = resynthesizer.resynthesize(w4)
+    assert res4.from_cache is True
+    assert res4.ir.num_qubits == 6
+    assert res4.ir.gates[0].name == "cz"
+    assert res4.ir.gates[0].qubits == (1, 5)
+    assert resynthesizer.cache_info()["hits"] == 3
+    assert checker.check(w4, res4.ir).equivalent
+
+
+def test_per_call_solver_timeout_enforcement():
+    """Issue #33 acceptance: No solver call exceeds timeout_s."""
+    # A 4-qubit circuit with 10 non-trivial gates that cannot be simplified to depth 1-2 quickly
+    w = IntermediateRepresentation(4, name="timeout_cand")
+    w.add("h", [0]).add("cx", [0, 1]).add("t", [1]).add("cx", [1, 2])
+    w.add("s", [2]).add("cx", [2, 3]).add("t", [3]).add("h", [1])
+    w.add("cx", [0, 2]).add("z", [3])
+
+    resynthesizer = BoundedResynthesizer(ResynthConfig(max_qubits=4, max_gates=12, timeout_s=30.0))
+
+    # Strict per-call timeout of 0.05 seconds
+    t0 = time.perf_counter()
+    ir, status, solve_s = resynthesizer.resynthesize(w, timeout_s=0.05)
+    elapsed = time.perf_counter() - t0
+
+    assert status == "timeout"
+    assert elapsed < 0.2, f"Solver exceeded per-call timeout! Elapsed: {elapsed:.4f}s"
+    assert solve_s <= elapsed
+    assert ir.gate_count() == w.gate_count()
+
+
+def test_cache_info_and_clear_cache():
+    """Verify cache statistics inspection and clearing."""
+    resynthesizer = BoundedResynthesizer(ResynthConfig(max_qubits=2, max_gates=6))
+    w = IntermediateRepresentation(2)
+    w.add("x", [0]).add("x", [0])
+
+    resynthesizer.resynthesize(w)
+    resynthesizer.resynthesize(w)
+    info = resynthesizer.cache_info()
+    assert info["hits"] == 1
+    assert info["misses"] == 1
+    assert info["size"] == 1
+
+    resynthesizer.clear_cache()
+    info_cleared = resynthesizer.cache_info()
+    assert info_cleared["hits"] == 0
+    assert info_cleared["misses"] == 0
+    assert info_cleared["size"] == 0
+
+
+def test_bounded_resynthesizer_integrated_on_real_pipeline_blocks():
+    """Issue #33: Integrate BoundedResynthesizer on real Block windows in HybridOptimizer."""
+    from qco.pipeline import HybridOptimizer, PipelineConfig
+
+    # Circuit with 2 blocks, each containing an unoptimized H-CX-H identity
+    c = IntermediateRepresentation(4, name="two_blocks")
+    # Block 1 subcircuit on qubits 0, 1
+    c.add("h", [1]).add("cx", [0, 1]).add("h", [1])
+    # Block 2 subcircuit on qubits 2, 3
+    c.add("h", [3]).add("cx", [2, 3]).add("h", [3])
+
+    opt = HybridOptimizer(PipelineConfig(
+        max_block_gates=4,
+        enable_resynthesis=True,
+        verify_rewrites=True,
+    ))
+
+    res = opt.run(c)
+    assert res.verified is True
+    # Initial gate count: 6 gates. Re-synthesis replaces each 3-gate H-CX-H with 1-gate CZ -> 2 gates total!
+    best = res.pareto_front[0].circuit
+    assert best.gate_count() < c.gate_count()
+    # Cache hit should have occurred on the second block because of canonical form
+    assert opt.resynthesizer.cache_hits >= 1
+
 
 
 
