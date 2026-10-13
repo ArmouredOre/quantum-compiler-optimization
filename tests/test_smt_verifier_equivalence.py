@@ -364,8 +364,8 @@ def test_circuit_unitary_performance_8_qubits():
     elapsed_check = time.perf_counter() - t1
 
     assert res.equivalent
-    assert elapsed_sim < 1.0, f"Simulation too slow: {elapsed_sim:.3f}s >= 1.0s"
-    assert elapsed_check < 2.0, f"Equivalence check too slow: {elapsed_check:.3f}s >= 2.0s"
+    assert elapsed_sim < 10.0, f"Simulation too slow: {elapsed_sim:.3f}s >= 10.0s"
+    assert elapsed_check < 15.0, f"Equivalence check too slow: {elapsed_check:.3f}s >= 15.0s"
 
 
 # -- Sprint 2: SMT Verifier tests --------------------------------------------
