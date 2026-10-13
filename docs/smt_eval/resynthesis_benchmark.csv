@@ -1,0 +1,7 @@
+circuit,qubits,orig_gates,blocks_count,windows_evaluated,windows_reduced,gates_saved,reduction_pct,cache_hits,cache_misses,cache_size,time_s
+ghz_n5.qasm,5,5,1,0,0,0,0.0,0,0,0,1.260003773495555e-05
+ghz_n10.qasm,10,10,2,0,0,0,0.0,0,0,0,2.269999822601676e-05
+rand_cnotpauli_n5.qasm,5,34,8,8,1,1,2.941176470588235,0,8,8,1.5644849000382237
+rand_cliffordt_n5.qasm,5,34,8,8,0,0,0.0,0,16,16,1.9688073999714106
+qaoa_n6_p1.qasm,6,32,8,8,0,0,0.0,1,23,23,1.505293599970173
+qft_n5.qasm,5,17,3,2,0,0,0.0,1,25,25,0.6010015999781899
