@@ -130,9 +130,18 @@ Runs on each block; iterates until no module proposes an accepted change.
   candidate gate pairs/chains for cancellation, replacing exhaustive pairwise
   search. Emits a ranked candidate list.
 * **Module C — SAT/SMT Verifier & Bounded Optimizer.** Encodes unitary
-  equivalence in SMT (Z3 / CVC5). *Every* rewrite proposed by A or B is checked;
-  rejected rewrites are reverted. Where a window is small enough, C also performs
-  exact minimal re‑synthesis.
+  equivalence in SMT (Z3 / CVC5) and provides numeric unitary equivalence checking.
+  *Every* rewrite proposed by Module A or B is checked:
+  - **Revert Protocol Contract:** When a rewrite is proposed for a block, Module C
+    checks equivalence against the pre-rewrite block. If `equivalent` is true, the
+    rewrite is accepted. If verification fails (`equivalent` is false), the rewrite
+    is rejected and reverted: the pre-rewrite block (or verified fallback) is
+    restored, and an audit `RevertEvent` is logged with the concrete counterexample
+    (basis input and matrix entry where unitaries diverge).
+  - **Verified-Label API (`verify_candidates`):** Exposes `verify_candidates(ir, candidates)`
+    to Module B (M3) to generate verified ground-truth training labels on benchmarks
+    up to 8 qubits.
+  - Where a window is small enough, C also performs exact minimal re-synthesis.
 
 ### Stage 5 — Module D: Evolutionary Multi‑Objective Search
 NSGA‑II operates over the **population of verified candidate circuits** produced

@@ -21,6 +21,7 @@ import functools
 import math
 from dataclasses import dataclass
 from fractions import Fraction
+from typing import Any, Sequence
 
 try:
     import numpy as np
@@ -36,7 +37,7 @@ except ImportError:  # pragma: no cover
     _z3_module = None  # type: ignore
     _HAS_Z3 = False
 
-from qco.ir.intermediate_representation import IntermediateRepresentation
+from qco.ir.intermediate_representation import Gate, IntermediateRepresentation
 
 Complex = complex
 
@@ -46,6 +47,41 @@ class EquivalenceResult:
     equivalent: bool
     method: str
     detail: str = ""
+    counterexample: dict[str, Any] | None = None
+
+    def replay_on_unitaries(
+        self,
+        ua: list[list[complex]] | Any,
+        ub: list[list[complex]] | Any,
+        atol: float = 1e-6,
+    ) -> bool:
+        """Verify that the counterexample reproduces a mismatch on given unitaries."""
+        if self.counterexample is None:
+            return False
+        i, j = self.counterexample["entry"]
+        val_a = ua[i][j] if isinstance(ua, list) else ua[i, j]
+        val_b = ub[i][j] if isinstance(ub, list) else ub[i, j]
+        norm_diff = abs(abs(val_a) - abs(val_b))
+        if norm_diff > atol:
+            return True
+        phase = self.counterexample.get("phase")
+        if phase is not None:
+            ph = cmath.exp(1j * phase)
+            return abs(val_a - ph * val_b) > atol
+        return abs(val_a - val_b) > atol
+
+    def replay(
+        self,
+        original: IntermediateRepresentation,
+        rewrite: IntermediateRepresentation,
+        atol: float = 1e-6,
+    ) -> bool:
+        """Replay the counterexample through circuit_unitary to reproduce mismatch."""
+        if self.counterexample is None:
+            return False
+        ua = circuit_unitary(original)
+        ub = circuit_unitary(rewrite)
+        return self.replay_on_unitaries(ua, ub, atol=atol)
 
 
 # -- minimal dependency-free unitary builder (<= ~6 qubits) -----------------
@@ -400,12 +436,30 @@ def check_smt(
     # because |e^{i*phi} * z| == |z|. If any entry norm violates this,
     # the unitaries cannot be equivalent under any global phase.
     tol_norm = max(atol * 5, 1e-4)
+    n_qubits = (dim - 1).bit_length()
     for i in range(dim):
         row_a = ua[i]
         row_b = ub[i]
         for j in range(dim):
             if abs(abs(row_a[j]) - abs(row_b[j])) > tol_norm:
-                return EquivalenceResult(False, "smt", "unitaries not equivalent (UNSAT)")
+                diff = abs(abs(row_a[j]) - abs(row_b[j]))
+                cx = {
+                    "entry": (i, j),
+                    "basis_input": j,
+                    "input_bitstring": f"{j:0{n_qubits}b}",
+                    "output_basis": i,
+                    "output_bitstring": f"{i:0{n_qubits}b}",
+                    "val_a": row_a[j],
+                    "val_b": row_b[j],
+                    "diff": diff,
+                    "reason": "norm mismatch",
+                }
+                detail = (
+                    f"counterexample: entry ({i}, {j}), basis input |{j:0{n_qubits}b}> (index {j}), "
+                    f"output |{i:0{n_qubits}b}>: |U_a|={abs(row_a[j]):.4f} != |U_b|={abs(row_b[j]):.4f} "
+                    f"(norm diff={diff:.6e}) (UNSAT)"
+                )
+                return EquivalenceResult(False, "smt", detail, counterexample=cx)
 
     # Find pivot entry in ub with maximum amplitude
     max_val = -1.0
@@ -447,7 +501,38 @@ def check_smt(
     while True:
         status = solver.check()
         if status == _z3_module.unsat:
-            return EquivalenceResult(False, "smt", "unitaries not equivalent (UNSAT)")
+            pv_a = ua[pivot[0]][pivot[1]]
+            pv_b = ub[pivot[0]][pivot[1]]
+            ph = (pv_a / pv_b) if abs(pv_b) > 1e-12 else 1.0 + 0j
+            if abs(ph) > 1e-12:
+                ph = ph / abs(ph)
+            best_diff = -1.0
+            best_entry = (0, 0)
+            for r in range(dim):
+                for col in range(dim):
+                    d = abs(ua[r][col] - ph * ub[r][col])
+                    if d > best_diff:
+                        best_diff = d
+                        best_entry = (r, col)
+            bi, bj = best_entry
+            cx = {
+                "entry": (bi, bj),
+                "basis_input": bj,
+                "input_bitstring": f"{bj:0{n_qubits}b}",
+                "output_basis": bi,
+                "output_bitstring": f"{bi:0{n_qubits}b}",
+                "val_a": ua[bi][bj],
+                "val_b": ub[bi][bj],
+                "diff": best_diff,
+                "phase": math.atan2(ph.imag, ph.real),
+                "reason": "phase relation mismatch",
+            }
+            detail = (
+                f"counterexample: entry ({bi}, {bj}), basis input |{bj:0{n_qubits}b}> (index {bj}), "
+                f"output |{bi:0{n_qubits}b}>: U_a[{bi},{bj}]={ua[bi][bj]:.4f} != "
+                f"e^(i*phi)*U_b[{bi},{bj}]={(ph * ub[bi][bj]):.4f} (diff={best_diff:.6e}) (UNSAT)"
+            )
+            return EquivalenceResult(False, "smt", detail, counterexample=cx)
         elif status != _z3_module.sat:
             return EquivalenceResult(False, "smt", "SMT solver timeout/unknown")
 
@@ -500,26 +585,13 @@ class EquivalenceChecker:
         # Prefer numeric for small windows; SMT beyond
         return n > 5 or total_gates > 50
 
-    def check(self, original: "IntermediateRepresentation", rewrite: "IntermediateRepresentation") -> EquivalenceResult:
-        if original.num_qubits != rewrite.num_qubits:
-            return EquivalenceResult(False, "numeric", "qubit count differs")
-
-        # Determine effective backend
-        backend = self.backend
-        if backend == "auto":
-            backend = "smt" if self._use_smt(original, rewrite) else "numeric"
-
-        if backend in ("smt", "z3", "cvc5"):
-            ua = circuit_unitary(original)
-            ub = circuit_unitary(rewrite)
-            return check_smt(
-                ua, ub,
-                atol=max(self.atol, 1e-6),  # SMT uses looser tolerance due to rational approximation
-                timeout=self.timeout,
-                solver_backend=self.solver_backend if backend == "smt" else backend,
-            )
-        ua, ub = circuit_unitary(original), circuit_unitary(rewrite)
+    def _check_numeric_unitaries(
+        self,
+        ua: list[list[complex]],
+        ub: list[list[complex]],
+    ) -> EquivalenceResult:
         dim = len(ua)
+        n_qubits = (dim - 1).bit_length()
 
         if _HAS_NUMPY:
             ua_arr = np.asarray(ua, dtype=complex)
@@ -530,45 +602,347 @@ class EquivalenceChecker:
             pivot_val_b = ub_arr[i, j]
 
             if abs(pivot_val_a) <= self.atol or abs(pivot_val_b) <= self.atol:
-                return EquivalenceResult(False, "numeric", "phase pivot mismatch")
+                cx = {
+                    "entry": (int(i), int(j)),
+                    "basis_input": int(j),
+                    "input_bitstring": f"{int(j):0{n_qubits}b}",
+                    "output_basis": int(i),
+                    "output_bitstring": f"{int(i):0{n_qubits}b}",
+                    "val_a": complex(pivot_val_a),
+                    "val_b": complex(pivot_val_b),
+                    "diff": abs(pivot_val_a - pivot_val_b),
+                    "reason": "phase pivot mismatch",
+                }
+                detail = (
+                    f"phase pivot mismatch: counterexample entry ({i}, {j}), "
+                    f"basis input |{int(j):0{n_qubits}b}> (index {j}), "
+                    f"U_a[{i},{j}]={complex(pivot_val_a):.4f} != U_b[{i},{j}]={complex(pivot_val_b):.4f}"
+                )
+                return EquivalenceResult(False, "numeric", detail, counterexample=cx)
 
             ph_raw = pivot_val_a / pivot_val_b
             if abs(abs(ph_raw) - 1.0) > 1e-3:
-                return EquivalenceResult(False, "numeric", "unitaries differ (phase scale mismatch)")
+                diff = abs(abs(pivot_val_a) - abs(pivot_val_b))
+                cx = {
+                    "entry": (int(i), int(j)),
+                    "basis_input": int(j),
+                    "input_bitstring": f"{int(j):0{n_qubits}b}",
+                    "output_basis": int(i),
+                    "output_bitstring": f"{int(i):0{n_qubits}b}",
+                    "val_a": complex(pivot_val_a),
+                    "val_b": complex(pivot_val_b),
+                    "diff": diff,
+                    "reason": "phase scale mismatch",
+                }
+                detail = (
+                    f"unitaries differ (phase scale mismatch): counterexample entry ({i}, {j}), "
+                    f"basis input |{int(j):0{n_qubits}b}> (index {j}), "
+                    f"|U_a|={abs(pivot_val_a):.4f} != |U_b|={abs(pivot_val_b):.4f}"
+                )
+                return EquivalenceResult(False, "numeric", detail, counterexample=cx)
 
             ph = ph_raw / abs(ph_raw)
-            ok = np.allclose(ua_arr, ph * ub_arr, atol=self.atol, rtol=self.rtol)
-            return EquivalenceResult(bool(ok), "numeric", "" if ok else "unitaries differ")
+            diff_matrix = np.abs(ua_arr - ph * ub_arr)
+            tol_matrix = self.atol + self.rtol * np.abs(ua_arr)
+            violating = diff_matrix > tol_matrix
+            if not np.any(violating):
+                return EquivalenceResult(True, "numeric", "")
+
+            # Entry with maximum violation
+            max_viol_idx = int(np.argmax(diff_matrix))
+            vi, vj = np.unravel_index(max_viol_idx, ua_arr.shape)
+            val_a = complex(ua_arr[vi, vj])
+            val_b = complex(ub_arr[vi, vj])
+            max_diff = float(diff_matrix[vi, vj])
+            cx = {
+                "entry": (int(vi), int(vj)),
+                "basis_input": int(vj),
+                "input_bitstring": f"{int(vj):0{n_qubits}b}",
+                "output_basis": int(vi),
+                "output_bitstring": f"{int(vi):0{n_qubits}b}",
+                "val_a": val_a,
+                "val_b": val_b,
+                "diff": max_diff,
+                "phase": math.atan2(ph.imag, ph.real),
+                "reason": "entry mismatch under global phase",
+            }
+            detail = (
+                f"unitaries differ: counterexample entry ({vi}, {vj}), "
+                f"basis input |{int(vj):0{n_qubits}b}> (index {vj}), "
+                f"output |{int(vi):0{n_qubits}b}>: U_a[{vi},{vj}]={val_a:.4f} != "
+                f"e^(i*phi)*U_b[{vi},{vj}]={(ph * val_b):.4f} (diff={max_diff:.6e})"
+            )
+            return EquivalenceResult(False, "numeric", detail, counterexample=cx)
 
         # Pure-Python path
         max_val = -1.0
         pivot = (0, 0)
         for r in range(dim):
             ua_r = ua[r]
-            for c in range(dim):
-                val = abs(ua_r[c])
+            for c_idx in range(dim):
+                val = abs(ua_r[c_idx])
                 if val > max_val:
                     max_val = val
-                    pivot = (r, c)
+                    pivot = (r, c_idx)
 
         i, j = pivot
         pivot_val_a = ua[i][j]
         pivot_val_b = ub[i][j]
 
         if abs(pivot_val_a) <= self.atol or abs(pivot_val_b) <= self.atol:
-            return EquivalenceResult(False, "numeric", "phase pivot mismatch")
+            cx = {
+                "entry": (i, j),
+                "basis_input": j,
+                "input_bitstring": f"{j:0{n_qubits}b}",
+                "output_basis": i,
+                "output_bitstring": f"{i:0{n_qubits}b}",
+                "val_a": pivot_val_a,
+                "val_b": pivot_val_b,
+                "diff": abs(pivot_val_a - pivot_val_b),
+                "reason": "phase pivot mismatch",
+            }
+            detail = (
+                f"phase pivot mismatch: counterexample entry ({i}, {j}), "
+                f"basis input |{j:0{n_qubits}b}> (index {j}), "
+                f"U_a[{i},{j}]={pivot_val_a:.4f} != U_b[{i},{j}]={pivot_val_b:.4f}"
+            )
+            return EquivalenceResult(False, "numeric", detail, counterexample=cx)
 
         ph_raw = pivot_val_a / pivot_val_b
         if abs(abs(ph_raw) - 1.0) > 1e-3:
-            return EquivalenceResult(False, "numeric", "unitaries differ (phase scale mismatch)")
+            diff = abs(abs(pivot_val_a) - abs(pivot_val_b))
+            cx = {
+                "entry": (i, j),
+                "basis_input": j,
+                "input_bitstring": f"{j:0{n_qubits}b}",
+                "output_basis": i,
+                "output_bitstring": f"{i:0{n_qubits}b}",
+                "val_a": pivot_val_a,
+                "val_b": pivot_val_b,
+                "diff": diff,
+                "reason": "phase scale mismatch",
+            }
+            detail = (
+                f"unitaries differ (phase scale mismatch): counterexample entry ({i}, {j}), "
+                f"basis input |{j:0{n_qubits}b}> (index {j}), "
+                f"|U_a|={abs(pivot_val_a):.4f} != |U_b|={abs(pivot_val_b):.4f}"
+            )
+            return EquivalenceResult(False, "numeric", detail, counterexample=cx)
 
         ph = ph_raw / abs(ph_raw)
+        max_diff = -1.0
+        max_entry = (0, 0)
+        found_diff = False
         for r in range(dim):
             ua_r = ua[r]
             ub_r = ub[r]
-            for c in range(dim):
-                diff = abs(ua_r[c] - ph * ub_r[c])
-                tol = self.atol + self.rtol * abs(ua_r[c])
+            for c_idx in range(dim):
+                diff = abs(ua_r[c_idx] - ph * ub_r[c_idx])
+                tol = self.atol + self.rtol * abs(ua_r[c_idx])
                 if diff > tol:
-                    return EquivalenceResult(False, "numeric", "unitaries differ")
+                    found_diff = True
+                    if diff > max_diff:
+                        max_diff = diff
+                        max_entry = (r, c_idx)
+
+        if found_diff:
+            vi, vj = max_entry
+            val_a = ua[vi][vj]
+            val_b = ub[vi][vj]
+            cx = {
+                "entry": (vi, vj),
+                "basis_input": vj,
+                "input_bitstring": f"{vj:0{n_qubits}b}",
+                "output_basis": vi,
+                "output_bitstring": f"{vi:0{n_qubits}b}",
+                "val_a": val_a,
+                "val_b": val_b,
+                "diff": max_diff,
+                "phase": math.atan2(ph.imag, ph.real),
+                "reason": "entry mismatch under global phase",
+            }
+            detail = (
+                f"unitaries differ: counterexample entry ({vi}, {vj}), "
+                f"basis input |{vj:0{n_qubits}b}> (index {vj}), "
+                f"output |{vi:0{n_qubits}b}>: U_a[{vi},{vj}]={val_a:.4f} != "
+                f"e^(i*phi)*U_b[{vi},{vj}]={(ph * val_b):.4f} (diff={max_diff:.6e})"
+            )
+            return EquivalenceResult(False, "numeric", detail, counterexample=cx)
+
         return EquivalenceResult(True, "numeric", "")
+
+    def check_unitaries(
+        self,
+        ua: list[list[complex]],
+        ub: list[list[complex]],
+        *,
+        backend: str | None = None,
+    ) -> EquivalenceResult:
+        """Check equivalence between two pre-computed unitaries."""
+        effective_backend = backend or self.backend
+        if effective_backend in ("smt", "z3", "cvc5"):
+            return check_smt(
+                ua,
+                ub,
+                atol=max(self.atol, 1e-6),
+                timeout=self.timeout,
+                solver_backend=self.solver_backend if effective_backend == "smt" else effective_backend,
+            )
+        return self._check_numeric_unitaries(ua, ub)
+
+    def check(self, original: "IntermediateRepresentation", rewrite: "IntermediateRepresentation") -> EquivalenceResult:
+        if original.num_qubits != rewrite.num_qubits:
+            detail = f"qubit count differs: original={original.num_qubits}, rewrite={rewrite.num_qubits}"
+            return EquivalenceResult(False, "numeric", detail, counterexample=None)
+
+        # Determine effective backend
+        backend = self.backend
+        if backend == "auto":
+            backend = "smt" if self._use_smt(original, rewrite) else "numeric"
+
+        ua = circuit_unitary(original)
+        ub = circuit_unitary(rewrite)
+        return self.check_unitaries(ua, ub, backend=backend)
+
+
+# -- Module B (M3) Candidate Verification API ---------------------------------
+
+def apply_candidate_to_ir(
+    ir: IntermediateRepresentation,
+    candidate: Any,
+) -> IntermediateRepresentation:
+    """Apply a proposed candidate rewrite to an :class:`IntermediateRepresentation`.
+
+    Supports:
+    * :class:`IntermediateRepresentation` (returned copied)
+    * :class:`CancellationCandidate` (handles ``inverse_pair``, ``identity_chain``, ``rotation_merge``)
+    * tuple / list of gate indices to drop
+    """
+    if isinstance(candidate, IntermediateRepresentation):
+        return candidate.copy()
+
+    # If candidate is a CancellationCandidate (or has gate_indices / kind)
+    if hasattr(candidate, "gate_indices") or hasattr(candidate, "kind"):
+        kind = getattr(candidate, "kind", "inverse_pair")
+        indices = getattr(candidate, "gate_indices", None)
+        if not indices:
+            a = getattr(candidate, "a", None)
+            b = getattr(candidate, "b", None)
+            indices = tuple(x for x in (a, b) if x is not None)
+
+        if kind in ("inverse_pair", "identity_chain"):
+            drop = set(indices)
+            new_gates = [g for idx, g in enumerate(ir.gates) if idx not in drop]
+            return IntermediateRepresentation(num_qubits=ir.num_qubits, gates=new_gates, name=ir.name)
+
+        if kind == "rotation_merge":
+            drop = set(indices)
+            first_idx = min(indices)
+            # Sum parameters of the merged rotation chain
+            merged_params = 0.0
+            first_gate = ir.gates[first_idx]
+            for idx in sorted(indices):
+                g = ir.gates[idx]
+                if g.params:
+                    merged_params += g.params[0]
+            # Wrap to (-pi, pi]
+            wrapped = (merged_params + math.pi) % (2 * math.pi) - math.pi
+            new_gates = []
+            for idx, g in enumerate(ir.gates):
+                if idx == first_idx:
+                    if abs(wrapped) > 1e-8:
+                        new_gates.append(Gate(name=first_gate.name, qubits=first_gate.qubits, params=(wrapped,)))
+                elif idx not in drop:
+                    new_gates.append(g)
+            return IntermediateRepresentation(num_qubits=ir.num_qubits, gates=new_gates, name=ir.name)
+
+        # Fallback for other kinds: drop indices
+        drop = set(indices)
+        new_gates = [g for idx, g in enumerate(ir.gates) if idx not in drop]
+        return IntermediateRepresentation(num_qubits=ir.num_qubits, gates=new_gates, name=ir.name)
+
+    # Tuple / list of ints
+    if isinstance(candidate, (tuple, list)):
+        drop = set(candidate)
+        new_gates = [g for idx, g in enumerate(ir.gates) if idx not in drop]
+        return IntermediateRepresentation(num_qubits=ir.num_qubits, gates=new_gates, name=ir.name)
+
+    raise TypeError(f"Unsupported candidate type: {type(candidate)!r}")
+
+
+def verify_candidates_detailed(
+    ir: IntermediateRepresentation,
+    candidates: Sequence[Any] | None = None,
+    *,
+    checker: EquivalenceChecker | None = None,
+    backend: str = "auto",
+) -> list[tuple[Any, EquivalenceResult]]:
+    """Verify proposed candidates against ``ir``, returning full EquivalenceResults."""
+    if checker is None:
+        checker = EquivalenceChecker(backend=backend)
+
+    if candidates is None:
+        from qco.modules.gnn_cancellation.features import rule_based_candidates
+        candidates = rule_based_candidates(ir)
+
+    if not candidates:
+        return []
+
+    # Optimization: compute the original circuit unitary once if <= 8 qubits
+    results: list[tuple[Any, EquivalenceResult]] = []
+    ua = None
+    if ir.num_qubits <= 8:
+        try:
+            ua = circuit_unitary(ir)
+        except Exception:
+            ua = None
+
+    for cand in candidates:
+        try:
+            cand_ir = apply_candidate_to_ir(ir, cand)
+            if ua is not None and cand_ir.num_qubits <= 8:
+                ub = circuit_unitary(cand_ir)
+                eq_res = checker.check_unitaries(ua, ub)
+                results.append((cand, eq_res))
+            else:
+                eq_res = checker.check(ir, cand_ir)
+                results.append((cand, eq_res))
+        except Exception as exc:
+            results.append((cand, EquivalenceResult(False, "error", str(exc))))
+
+    return results
+
+
+def verify_candidates(
+    ir: IntermediateRepresentation,
+    candidates: Sequence[Any] | None = None,
+    *,
+    checker: EquivalenceChecker | None = None,
+    backend: str = "auto",
+) -> list[tuple[Any, bool]]:
+    """Verified-label API for Module B (M3) and downstream consumers.
+
+    Verifies candidate rewrites on ``ir`` against the ground-truth unitary using
+    SMT / numeric equivalence checking.
+
+    Parameters
+    ----------
+    ir : IntermediateRepresentation
+        The reference circuit (<= 8 qubits for unitary checking).
+    candidates : Sequence[Any] | None
+        List of candidates (e.g. :class:`CancellationCandidate`, pairs of indices,
+        or candidate :class:`IntermediateRepresentation` circuits).
+        If None, generates candidates using :func:`rule_based_candidates(ir)`.
+    checker : EquivalenceChecker | None
+        Optional checker instance to reuse.
+    backend : str
+        Checker backend ("auto", "numeric", "smt").
+
+    Returns
+    -------
+    list[tuple[Any, bool]]
+        List of ``(candidate, verified: bool)`` pairs.
+    """
+    detailed = verify_candidates_detailed(ir, candidates, checker=checker, backend=backend)
+    return [(cand, res.equivalent) for cand, res in detailed]
+
