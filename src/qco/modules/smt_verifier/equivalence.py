@@ -795,14 +795,37 @@ class EquivalenceChecker:
             detail = f"qubit count differs: original={original.num_qubits}, rewrite={rewrite.num_qubits}"
             return EquivalenceResult(False, "numeric", detail, counterexample=None)
 
-        # Determine effective backend
         backend = self.backend
-        if backend == "auto":
-            backend = "smt" if self._use_smt(original, rewrite) else "numeric"
 
-        ua = circuit_unitary(original)
-        ub = circuit_unitary(rewrite)
-        return self.check_unitaries(ua, ub, backend=backend)
+        # 1. Route {CX, Rz, X} windows to the phase-polynomial checker (Novelty N2)
+        from qco.modules.smt_verifier.phase_poly import is_phase_poly_circuit, check_phase_poly
+
+        if backend in ("auto", "phase_poly"):
+            if is_phase_poly_circuit(original) and is_phase_poly_circuit(rewrite):
+                return check_phase_poly(original, rewrite, atol=self.atol, timeout=self.timeout)
+            if backend == "phase_poly":
+                return EquivalenceResult(
+                    False,
+                    "phase_poly",
+                    "Circuit contains gates outside {CX, Rz, X} family not supported by phase-polynomial checker",
+                )
+
+        # 2. Dense unitary SMT / numeric verification for <= 8 qubits
+        if original.num_qubits <= 8:
+            effective_backend = self.backend
+            if effective_backend == "auto":
+                effective_backend = "smt" if self._use_smt(original, rewrite) else "numeric"
+            ua = circuit_unitary(original)
+            ub = circuit_unitary(rewrite)
+            return self.check_unitaries(ua, ub, backend=effective_backend)
+
+        # 3. Beyond 8 qubits where phase-polynomial does not apply:
+        # Return an explicit method="unverified" result instead of silently skipping
+        detail = (
+            f"circuit has {original.num_qubits} qubits (> 8) and non-phase-poly gates; "
+            f"dense-unitary verification ceiling exceeded"
+        )
+        return EquivalenceResult(False, "unverified", detail)
 
 
 # -- Module B (M3) Candidate Verification API ---------------------------------
