@@ -9,15 +9,34 @@ from qco.modules.smt_verifier.equivalence import (
     verify_candidates,
     verify_candidates_detailed,
 )
-from qco.modules.smt_verifier.bounded_optimizer import BoundedResynthesizer
+from qco.modules.smt_verifier.bounded_optimizer import (
+    BoundedResynthesizer,
+    ResynthConfig,
+    ResynthOutcome,
+    resynthesize_window,
+)
+from qco.modules.smt_verifier.phase_poly import (
+    PhasePolynomial,
+    check_phase_poly,
+    extract_phase_polynomial,
+    is_phase_poly_circuit,
+)
 
 __all__ = [
     "EquivalenceChecker",
     "EquivalenceResult",
     "BoundedResynthesizer",
+    "ResynthConfig",
+    "ResynthOutcome",
+    "resynthesize_window",
+    "PhasePolynomial",
+    "check_phase_poly",
+    "extract_phase_polynomial",
+    "is_phase_poly_circuit",
     "check_smt",
     "circuit_unitary",
     "apply_candidate_to_ir",
     "verify_candidates",
     "verify_candidates_detailed",
 ]
+

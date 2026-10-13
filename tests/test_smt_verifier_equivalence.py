@@ -5,6 +5,12 @@ import time
 import pytest
 
 from qco.ir.intermediate_representation import ARITY, Gate, IntermediateRepresentation
+from qco.modules.smt_verifier.bounded_optimizer import (
+    BoundedResynthesizer,
+    ResynthConfig,
+    ResynthOutcome,
+    resynthesize_window,
+)
 from qco.modules.smt_verifier.equivalence import (
     EquivalenceChecker,
     EquivalenceResult,
@@ -13,6 +19,12 @@ from qco.modules.smt_verifier.equivalence import (
     circuit_unitary,
     verify_candidates,
     verify_candidates_detailed,
+)
+from qco.modules.smt_verifier.phase_poly import (
+    PhasePolynomial,
+    check_phase_poly,
+    extract_phase_polynomial,
+    is_phase_poly_circuit,
 )
 
 try:
@@ -447,11 +459,11 @@ def test_equivalence_checker_backend_auto():
     assert res_large_q.equivalent
     assert res_large_q.method == "smt"
 
-    # 3. > 50 gates on 2 qubits: auto selects smt
+    # 3. > 50 gates on 2 qubits: auto selects smt for non-phase-poly circuits
     many_gates = IntermediateRepresentation(2)
     for _ in range(26):
-        many_gates.add("x", [0])
-        many_gates.add("x", [1])
+        many_gates.add("h", [0])
+        many_gates.add("h", [1])
     res_many = EquivalenceChecker(backend="auto").check(many_gates, many_gates)
     assert res_many.equivalent
     assert res_many.method == "smt"
@@ -674,5 +686,155 @@ def test_pipeline_revert_protocol_rejects_and_restores():
     assert revert_event.counterexample is not None
     # Pre-rewrite block was preserved
     assert restored.gate_count() == orig.gate_count()
+
+
+# -- Issue #27 (Novelty N1 & N2): Phase Polynomial SMT & Bounded Re-synthesis -
+
+def test_phase_poly_agrees_with_numeric_on_random_small_circuits():
+    """Acceptance criteria: Phase-poly checker agrees with numeric checker on random <= 6-qubit CX+Rz circuits."""
+    num_checker = EquivalenceChecker(backend="numeric")
+    rng = random.Random(12345)
+
+    for trial in range(25):
+        nq = rng.randint(2, 5)
+        ir1 = IntermediateRepresentation(nq)
+        num_gates = rng.randint(5, 15)
+        for _ in range(num_gates):
+            if rng.random() < 0.55:
+                c, t = rng.sample(range(nq), 2)
+                ir1.add("cx", [c, t])
+            else:
+                q = rng.randrange(nq)
+                angle = round(rng.uniform(-math.pi, math.pi), 4)
+                ir1.add("rz", [q], [angle])
+
+        ir2 = ir1.copy()
+        # In half the trials, mutate a gate
+        if rng.random() < 0.5:
+            if ir2.gates:
+                idx = rng.randrange(len(ir2.gates))
+                g = ir2.gates[idx]
+                if g.name == "rz":
+                    ir2.gates[idx] = Gate("rz", g.qubits, (g.params[0] + 0.4,))
+                else:
+                    ir2.gates[idx] = Gate("rz", [g.qubits[0]], (0.4,))
+
+        res_poly = check_phase_poly(ir1, ir2)
+        res_num = num_checker.check(ir1, ir2)
+        assert res_poly.equivalent == res_num.equivalent, (
+            f"Disagreement on trial {trial}: poly={res_poly.equivalent}, num={res_num.equivalent}"
+        )
+
+
+def test_phase_poly_rejects_single_angle_mutation():
+    """Acceptance criteria: Phase-poly checker rejects a single-angle mutation with counterexample."""
+    ir1 = IntermediateRepresentation(3)
+    ir1.add("cx", [0, 1]).add("rz", [1], [0.6]).add("cx", [1, 2]).add("rz", [2], [-0.3])
+
+    ir2 = ir1.copy()
+    # Mutate second Rz angle: 0.6 -> 0.9
+    ir2.gates[1] = Gate("rz", [1], (0.9,))
+
+    res = check_phase_poly(ir1, ir2)
+    assert not res.equivalent
+    assert "counterexample" in res.detail
+    assert "phase difference" in res.detail
+    assert res.counterexample is not None
+    assert "basis_input" in res.counterexample
+
+
+def test_phase_poly_verifies_20_qubit_circuit():
+    """Acceptance criteria: Verifies a 20-qubit CX+Rz circuit (numeric path cannot)."""
+    ir1 = IntermediateRepresentation(20)
+    for i in range(19):
+        ir1.add("cx", [i, i + 1])
+        ir1.add("rz", [i + 1], [0.25 * (i + 1)])
+        ir1.add("cx", [i, i + 1])
+
+    ir2 = ir1.copy()
+
+    # Numeric path cannot verify 20 qubits: circuit_unitary raises ValueError (> 8 qubits)
+    with pytest.raises(ValueError, match="limited to 8 qubits"):
+        circuit_unitary(ir1)
+
+    # Phase-poly SMT path verifies 20 qubits easily
+    res = check_phase_poly(ir1, ir2)
+    assert res.equivalent
+    assert res.method == "phase_poly"
+    assert "global phase" in res.detail
+
+
+def test_equivalence_checker_routing_phase_poly_and_unverified():
+    """Verify check() routes {CX, Rz, X} to phase_poly and returns unverified for >8 non-phase-poly."""
+    checker = EquivalenceChecker(backend="auto")
+
+    # 1. CX + Rz + X window routed to phase_poly
+    cx_rz_x = IntermediateRepresentation(4)
+    cx_rz_x.add("x", [0]).add("cx", [0, 1]).add("rz", [1], [0.5]).add("x", [2])
+    res_poly = checker.check(cx_rz_x, cx_rz_x)
+    assert res_poly.equivalent
+    assert res_poly.method == "phase_poly"
+
+    # 2. Large non-phase-poly circuit (>8 qubits with H gates) returns method="unverified"
+    large_h = IntermediateRepresentation(10)
+    large_h.add("h", [0]).add("cx", [0, 1])
+    res_unverified = checker.check(large_h, large_h)
+    assert not res_unverified.equivalent
+    assert res_unverified.method == "unverified"
+    assert "dense-unitary verification ceiling exceeded" in res_unverified.detail
+
+
+def test_bounded_resynthesizer_solve_textbook_identities():
+    """Acceptance criteria: _solve finds known-optimal form for small textbook identities."""
+    resynthesizer = BoundedResynthesizer(ResynthConfig(max_qubits=3, max_gates=8))
+
+    # 1. H(1) - CX(0, 1) - H(1) == CZ(0, 1) (3 gates -> 1 gate)
+    h_cx_h = IntermediateRepresentation(2, name="h_cx_h")
+    h_cx_h.add("h", [1]).add("cx", [0, 1]).add("h", [1])
+
+    outcome = resynthesizer.resynthesize_outcome(h_cx_h)
+    assert outcome.reduced
+    assert outcome.gates_saved == 2
+    assert outcome.circuit.gate_count() == 1
+    assert outcome.circuit.gates[0].name == "cz"
+    assert outcome.optimality == "optimal"
+
+    # 2. CX(0, 1) - CX(0, 1) -> empty circuit (2 gates -> 0 gates)
+    cx_cx = IntermediateRepresentation(2, name="cx_cx")
+    cx_cx.add("cx", [0, 1]).add("cx", [0, 1])
+
+    outcome_cx = resynthesizer.resynthesize_outcome(cx_cx)
+    assert outcome_cx.reduced
+    assert outcome_cx.gates_saved == 2
+    assert outcome_cx.circuit.gate_count() == 0
+
+    # 3. Already optimal single-gate circuit (e.g. H(0)) -> reduced is False, gates_saved is 0
+    h_single = IntermediateRepresentation(1, name="h").add("h", [0])
+    outcome_h = resynthesizer.resynthesize_outcome(h_single)
+    assert not outcome_h.reduced
+    assert outcome_h.gates_saved == 0
+    assert outcome_h.circuit.gate_count() == 1
+
+
+def test_resynthesize_outcome_api_for_m3():
+    """Verify Re-synthesis outcome API for M3 with unpacking and attribute access."""
+    c = IntermediateRepresentation(2)
+    c.add("h", [0]).add("h", [0])
+
+    # Unpack as (window, reduced, gates_saved, solve_s)
+    window, reduced, gates_saved, solve_s = resynthesize_window(c)
+    assert window is c
+    assert reduced is True
+    assert gates_saved == 2
+    assert isinstance(solve_s, float)
+    assert solve_s >= 0.0
+
+    # Attribute access on outcome
+    outcome = resynthesize_window(c)
+    assert outcome.reduced is True
+    assert outcome.gates_saved == 2
+    assert outcome.circuit.gate_count() == 0
+    assert outcome.optimality == "optimal"
+
 
 
