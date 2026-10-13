@@ -1,10 +1,13 @@
 """Front-end parsers: OpenQASM 2.0 / Qiskit / Cirq  ->  internal IR.
 
-Phase 2 status:
-* ``from_qasm2`` : implemented for the ``qelib1.inc`` gate subset the benchmark
-  suite uses (enough to load every circuit in ``benchmarks/circuits/``).
-* ``from_qiskit`` / ``from_cirq`` : signatures frozen; bodies land in Phase 3
-  (Swaraj Rane) once the ``compiler`` extra is installed.
+* ``from_qasm2`` : the ``qelib1.inc`` subset in ``ARITY`` (+ ``ALIASES``); all
+  ``qreg`` declarations are flattened into one index space in declaration order.
+* ``from_qiskit`` : walks ``QuantumCircuit.data`` directly.
+* ``from_cirq`` : goes through ``cirq.qasm`` and ``from_qasm2``.
+
+Non-unitary instructions (measure, reset, barrier) are dropped: the optimizer
+works on the unitary part only. Gates outside ``ARITY`` raise ``ValueError`` -
+transpile to a supported basis first.
 """
 
 from __future__ import annotations
@@ -13,13 +16,22 @@ import math
 import re
 from typing import Any
 
-from qco.ir.intermediate_representation import ARITY, IntermediateRepresentation
+from qco.ir.intermediate_representation import ALIASES, ARITY, IntermediateRepresentation
 
 _QREG = re.compile(r"qreg\s+(\w+)\s*\[\s*(\d+)\s*\]\s*;")
 _GATE = re.compile(r"^\s*(\w+)\s*(\([^)]*\))?\s+(.+?)\s*;\s*$")
 _QUBIT = re.compile(r"(\w+)\s*\[\s*(\d+)\s*\]")
 
 _CONSTS = {"pi": math.pi, "tau": math.tau, "euler": math.e}
+_SKIP = ("//", "OPENQASM", "include", "qreg", "creg", "barrier", "measure", "reset", "opaque")
+
+
+def _canonical(name: str) -> str:
+    name = name.lower()
+    name = ALIASES.get(name, name)
+    if name not in ARITY:
+        raise ValueError(f"gate {name!r} not supported by the IR (see ARITY)")
+    return name
 
 
 def _eval_param(expr: str) -> float:
@@ -34,45 +46,73 @@ def _eval_param(expr: str) -> float:
 
 def from_qasm2(text: str) -> IntermediateRepresentation:
     """Parse an OpenQASM 2.0 string into an :class:`IntermediateRepresentation`."""
-    m = _QREG.search(text)
-    if not m:
+    offset: dict[str, int] = {}
+    nq = 0
+    for m in _QREG.finditer(text):
+        offset[m.group(1)] = nq
+        nq += int(m.group(2))
+    if not offset:
         raise ValueError("no `qreg` declaration found")
-    reg_name, nq = m.group(1), int(m.group(2))
     ir = IntermediateRepresentation(num_qubits=nq)
 
+    in_gate_def = False
     for raw in text.splitlines():
         line = raw.strip()
-        if not line or line.startswith(("//", "OPENQASM", "include", "qreg", "creg", "barrier", "measure")):
+        if line.startswith("gate "):  # custom gate definition: skip header + body
+            in_gate_def = "}" not in line
+            continue
+        if in_gate_def:
+            in_gate_def = "}" not in line
+            continue
+        if not line or line.startswith(_SKIP):
             continue
         gm = _GATE.match(line)
         if not gm:
             continue
-        name = gm.group(1).lower()
-        if name not in ARITY:
-            raise ValueError(f"gate {name!r} not supported by the Phase 2 IR")
+        name = _canonical(gm.group(1))
         params = ()
         if gm.group(2):
             inner = gm.group(2)[1:-1].strip()
             if inner:
                 params = tuple(_eval_param(p) for p in inner.split(","))
-        qubits = tuple(int(q) for reg, q in _QUBIT.findall(gm.group(3)) if reg == reg_name)
+        qubits = tuple(offset[reg] + int(q) for reg, q in _QUBIT.findall(gm.group(3)))
         ir.add(name, qubits, params)
     return ir
 
 
-def from_qiskit(circuit: Any) -> IntermediateRepresentation:  # pragma: no cover - Phase 3
+def from_qiskit(circuit: Any, bindings: dict | None = None) -> IntermediateRepresentation:
     """Convert a ``qiskit.QuantumCircuit`` to the internal IR.
 
-    Phase 3 (Swaraj Rane): iterate ``circuit.data``, map standard gate names,
-    resolve ``Parameter`` bindings, and flatten registers to a single index
-    space.
+    ``bindings`` maps ``Parameter`` -> value; every parameter must end up bound.
+    Registers are flattened via ``circuit.find_bit`` (declaration order).
     """
-    raise NotImplementedError("from_qiskit lands in Phase 3 (needs the `compiler` extra)")
+    if bindings:
+        circuit = circuit.assign_parameters(bindings)
+    if circuit.parameters:
+        raise ValueError(f"unbound parameters: {sorted(p.name for p in circuit.parameters)}")
+    ir = IntermediateRepresentation(num_qubits=circuit.num_qubits, name=circuit.name)
+    for inst in circuit.data:
+        op = inst.operation
+        if op.name in ("measure", "reset", "barrier", "delay"):
+            continue
+        qubits = tuple(circuit.find_bit(q).index for q in inst.qubits)
+        ir.add(_canonical(op.name), qubits, tuple(float(p) for p in op.params))
+    return ir
 
 
-def from_cirq(circuit: Any) -> IntermediateRepresentation:  # pragma: no cover - Phase 3
-    """Convert a ``cirq.Circuit`` to the internal IR (Phase 3, Swaraj Rane)."""
-    raise NotImplementedError("from_cirq lands in Phase 3 (needs the `compiler` extra)")
+def from_cirq(circuit: Any, resolver: Any = None) -> IntermediateRepresentation:
+    """Convert a ``cirq.Circuit`` to the internal IR.
+
+    ``resolver`` is anything ``cirq.resolve_parameters`` accepts (e.g. a dict of
+    sympy symbol -> value). Qubits are numbered in cirq's sorted order.
+    """
+    import cirq
+
+    if resolver is not None:
+        circuit = cirq.resolve_parameters(circuit, resolver)
+    if cirq.is_parameterized(circuit):
+        raise ValueError("unbound parameters in cirq circuit; pass `resolver`")
+    return from_qasm2(cirq.qasm(circuit))
 
 
 def parse(source: Any) -> IntermediateRepresentation:

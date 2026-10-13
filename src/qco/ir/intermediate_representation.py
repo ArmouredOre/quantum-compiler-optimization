@@ -8,16 +8,24 @@ from __future__ import annotations
 from dataclasses import dataclass, field, replace
 from typing import Iterable, Iterator
 
+# The gate set is kept equal to what Module C's numeric/SMT checker can build a
+# matrix for, so every IR circuit is verifiable (novelty N2 relies on this).
 # Single-qubit self-inverse gates (g . g = I) and multi-qubit self-inverse gates.
-SELF_INVERSE = {"x", "y", "z", "h", "cx", "cz", "swap", "ccx"}
+SELF_INVERSE = {"id", "x", "y", "z", "h", "cx", "cy", "cz", "ch", "swap", "ccx", "cswap"}
 # Rotation gates: g(theta) . g(-theta) = I  (used by cancellation heuristics).
-PARAMETRIC = {"rx", "ry", "rz", "p", "cp", "crx", "cry", "crz", "rzz", "rxx"}
+PARAMETRIC = {"rx", "ry", "rz", "p", "cp", "crx", "cry", "crz", "rzz", "rxx", "ryy"}
 # Number of qubits each supported gate acts on.
 ARITY = {
-    "x": 1, "y": 1, "z": 1, "h": 1, "s": 1, "sdg": 1, "t": 1, "tdg": 1,
+    "id": 1, "x": 1, "y": 1, "z": 1, "h": 1, "s": 1, "sdg": 1, "t": 1, "tdg": 1,
     "rx": 1, "ry": 1, "rz": 1, "p": 1,
-    "cx": 2, "cz": 2, "swap": 2, "cp": 2, "crx": 2, "cry": 2, "crz": 2, "rzz": 2, "rxx": 2,
-    "ccx": 3,
+    "cx": 2, "cy": 2, "cz": 2, "ch": 2, "cs": 2, "csdg": 2, "swap": 2,
+    "cp": 2, "crx": 2, "cry": 2, "crz": 2, "rzz": 2, "rxx": 2, "ryy": 2,
+    "ccx": 3, "cswap": 3,
+}
+# Front-end spellings (qelib1 legacy names, Qiskit/Cirq aliases) -> canonical name.
+ALIASES = {
+    "i": "id", "u1": "p", "phase": "p", "cu1": "cp", "cphase": "cp",
+    "cnot": "cx", "toffoli": "ccx", "fredkin": "cswap",
 }
 
 
@@ -59,7 +67,7 @@ class Gate:
             return self
         if self.name in PARAMETRIC:
             return replace(self, params=tuple(-p for p in self.params))
-        inv = {"s": "sdg", "sdg": "s", "t": "tdg", "tdg": "t"}
+        inv = {"s": "sdg", "sdg": "s", "t": "tdg", "tdg": "t", "cs": "csdg", "csdg": "cs"}
         if self.name in inv:
             return replace(self, name=inv[self.name])
         raise NotImplementedError(f"no known inverse for gate {self.name!r}")

@@ -10,7 +10,7 @@ pyyaml>=6.0
 
 # Graph / hypergraph processing
 # networkx>=3.2
-#   KaHyPar / METIS: install via system package manager or `pip install kahypar`
+#   KaHyPar / METIS (optional partitioner backends): `pip install pymetis kahypar`
 
 # Reinforcement learning (Module A)
 # torch>=2.2
