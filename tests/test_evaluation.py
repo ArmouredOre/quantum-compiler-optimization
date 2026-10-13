@@ -277,6 +277,16 @@ def test_one_command_builds_every_table(tmp_path):
     for row in ("minus A (RL)", "minus D (NSGA-II)", "exhaustive", "| qco |"):
         assert row in summary
     assert (out / "summary.md").exists() and (out / "qco.csv").exists()
+    # #40: Pareto front per circuit (CSV always; PNG when matplotlib is installed)
+    assert "Pareto fronts" in summary
+    rows = list(csv.DictReader(open(out / "pareto" / "hcxh.csv")))
+    assert {r["source"] for r in rows} >= {"input", "qco"}
+    assert min(int(r["gate_count"]) for r in rows if r["source"] == "qco") < 6
+    try:
+        import matplotlib  # noqa: F401
+    except ImportError:
+        return
+    assert (out / "pareto" / "hcxh.png").stat().st_size > 0
 
 
 def test_tool_crash_becomes_unsupported_row():

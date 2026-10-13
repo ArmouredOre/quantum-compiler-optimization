@@ -245,16 +245,93 @@ def per_circuit_markdown(reports: dict[str, BenchmarkReport]) -> str:
     return "\n".join(lines)
 
 
-def pipeline_optimizer(**config) -> Callable[[IntermediateRepresentation], tuple]:
-    """qco's ``HybridOptimizer`` as a runner optimizer: best-gate-count front member."""
+def pipeline_optimizer(fronts: dict | None = None, **config) -> Callable[[IntermediateRepresentation], tuple]:
+    """qco's ``HybridOptimizer`` as a runner optimizer: best-gate-count front member.
+    With ``fronts``, each circuit's full Pareto front is stored under ``ir.name``."""
     from qco.pipeline import PipelineConfig, optimize
 
     def run(ir: IntermediateRepresentation):
         res = optimize(ir, PipelineConfig(**config))
+        if fronts is not None:
+            fronts[ir.name] = res.pareto_front
         best = min(res.pareto_front, key=lambda p: (p.objective.gate_count, p.objective.depth))
         return best.circuit, res.solver_time_s
 
     return run
+
+
+# Pareto plots: categorical slots 1-5 of the validated reference palette (light
+# surface), each with its own marker shape so identity never rests on color alone.
+_SERIES_STYLE = {
+    "qco": ("#2a78d6", "o"), "qiskit-O3": ("#eb6834", "s"), "tket": ("#1baf7a", "^"),
+    "pyzx": ("#eda100", "D"), "bqskit": ("#e87ba4", "v"),
+}
+_INK, _MUTED, _GRID, _SURFACE = "#1f1f1e", "#6b6a63", "#e6e5df", "#fcfcfb"
+
+
+def write_pareto(fronts: dict, reports: dict[str, BenchmarkReport], out_dir: str,
+                 calibration: "str | Calibration" = "default") -> str:
+    """Per circuit: ``<out_dir>/<circuit>.csv`` (qco front + input + baselines) and,
+    with matplotlib, ``<circuit>.png`` (gates vs depth | gates vs est. fidelity).
+    Returns a markdown table of front sizes."""
+    os.makedirs(out_dir, exist_ok=True)
+    try:
+        import matplotlib
+
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+    except ImportError:  # CSV-only without the viz extra
+        plt = None
+    cal = get_calibration(calibration)
+    lines = ["| circuit | front size | gates (min) | depth (min) | est. fidelity (max) |", "|---|---|---|---|---|"]
+    for name, front in sorted(fronts.items()):
+        pts = {"qco": [(p.circuit.gate_count(), p.circuit.depth(), cx_cost(p.circuit),
+                        estimated_fidelity(p.circuit, cal).value) for p in front]}
+        inp = None
+        for tool, r in reports.items():
+            for row in r.rows:
+                if row.circuit[: -len(".qasm")] == name:
+                    inp = (row.gate_count_before, row.depth_before, row.cx_cost_before, None)
+                    if tool in _SERIES_STYLE and tool != "qco":
+                        pts[tool] = [(row.gate_count_after, row.depth_after, row.cx_cost_after, row.fidelity_after)]
+        with open(os.path.join(out_dir, f"{name}.csv"), "w", encoding="utf-8", newline="") as fh:
+            w = csv.writer(fh)
+            w.writerow(["source", "gate_count", "depth", "cx_cost", "est_fidelity"])
+            if inp:
+                w.writerow(["input", *inp[:3], ""])
+            for tool, rows in pts.items():
+                w.writerows([tool, *row] for row in rows)
+        q = pts["qco"]
+        lines.append(f"| {name} | {len(q)} | {min(x[0] for x in q)} | {min(x[1] for x in q)} | "
+                     f"{max(x[3] for x in q):.4f} |")
+        if plt is None:
+            continue
+        fig, axes = plt.subplots(1, 2, figsize=(9, 3.6), facecolor=_SURFACE)
+        for ax, (yi, ylabel) in zip(axes, [(1, "depth"), (3, "estimated fidelity")]):
+            ax.set_facecolor(_SURFACE)
+            for tool, rows in pts.items():
+                color, marker = _SERIES_STYLE[tool]
+                rows = sorted(rows)
+                xs, ys = [r[0] for r in rows], [r[yi] for r in rows]
+                if tool == "qco" and len(rows) > 1:
+                    ax.plot(xs, ys, color=color, linewidth=2, zorder=2)
+                ax.scatter(xs, ys, color=color, marker=marker, s=64, edgecolors=_SURFACE,
+                           linewidths=2, zorder=3, label="qco Pareto front" if tool == "qco" else tool)
+            if inp and yi == 1:
+                ax.scatter([inp[0]], [inp[1]], color=_MUTED, marker="x", s=64, zorder=3, label="input")
+            ax.set_xlabel("gate count", color=_MUTED)
+            ax.set_ylabel(ylabel, color=_MUTED)
+            ax.tick_params(colors=_MUTED, length=0)
+            ax.grid(color=_GRID, linewidth=1)
+            for side in ax.spines.values():
+                side.set_visible(False)
+        axes[0].legend(frameon=False, fontsize=8, labelcolor=_INK)
+        fig.suptitle(f"{name}: qco Pareto front vs baselines (lower-left / lower-right is better)",
+                     color=_INK, fontsize=10)
+        fig.tight_layout()
+        fig.savefig(os.path.join(out_dir, f"{name}.png"), dpi=150, facecolor=_SURFACE)
+        plt.close(fig)
+    return "\n".join(lines)
 
 
 ABLATIONS = {
@@ -297,8 +374,8 @@ def main(argv: list[str] | None = None) -> str:
 
         return run_benchmarks(logged, args.suite, args.calibration, max_qubits=max_qubits)
 
-    def qco(**cfg):
-        return pipeline_optimizer(solver_budget_s=args.budget, calibration=args.calibration, **trained, **cfg)
+    def qco(fronts=None, **cfg):
+        return pipeline_optimizer(fronts=fronts, solver_budget_s=args.budget, calibration=args.calibration, **trained, **cfg)
 
     os.makedirs(args.out, exist_ok=True)
     sections = [f"# qco evaluation\n\nCalibration `{args.calibration}`, solver budget {args.budget}s/circuit, "
@@ -306,7 +383,8 @@ def main(argv: list[str] | None = None) -> str:
                 "CX-cost = multi-qubit gates in CX-equivalents (basis-independent; tools emit different gate sets)."]
     all_reports: dict[str, BenchmarkReport] = {}
 
-    full = bench(qco(), "qco")
+    fronts: dict = {}
+    full = bench(qco(fronts=fronts), "qco")
     all_reports["qco"] = full
     if "baselines" not in args.skip:
         compared = {"qco": full}
@@ -315,6 +393,9 @@ def main(argv: list[str] | None = None) -> str:
             if name.startswith("qiskit-O"):
                 print(f"## {name}\n\n{compared[name].to_markdown()}\n", flush=True)
         sections += [summary_markdown(compared, "qco vs baselines"), per_circuit_markdown(compared)]
+    pareto_dir = os.path.join(args.out, "pareto")
+    sections.append(f"### Pareto fronts (qco, per circuit)\n\nPlots + CSV in `{pareto_dir}/`.\n\n"
+                    + write_pareto(fronts, {"qco": full, **all_reports}, pareto_dir, args.calibration))
     if "ablations" not in args.skip:
         ablated = {"full": full}
         for name, cfg in ABLATIONS.items():
