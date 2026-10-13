@@ -628,7 +628,10 @@ def test_verify_candidates_on_all_benchmarks_under_8_qubits():
     from qco.ir.parser import from_qasm2
     from qco.modules.gnn_cancellation.features import rule_based_candidates
 
-    benchmark_dir = Path("benchmarks/circuits")
+    root = Path(__file__).resolve().parent.parent
+    benchmark_dir = root / "benchmarks" / "circuits"
+    if not benchmark_dir.exists():
+        benchmark_dir = Path("benchmarks/circuits")
     tested_count = 0
 
     for qasm_file in sorted(benchmark_dir.glob("*.qasm")):
