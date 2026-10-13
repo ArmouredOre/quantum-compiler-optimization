@@ -28,10 +28,11 @@ gnn      = ["torch>=2.2", "torch-geometric>=2.5"]
 smt      = ["z3-solver>=4.13"]
 ea       = ["pymoo>=0.6", "deap>=1.4"]
 viz      = ["matplotlib>=3.8", "pandas>=2.2"]
+baselines = ["qiskit>=1.0", "pytket>=1.28", "pyzx>=0.8", "bqskit>=1.1"]  # Stage 6 comparison
 test     = ["pytest>=8.0"]
 dev      = [
     "qco[compiler]", "qco[graphs]", "qco[rl]", "qco[gnn]",
-    "qco[smt]", "qco[ea]", "qco[viz]", "qco[test]",
+    "qco[smt]", "qco[ea]", "qco[viz]", "qco[baselines]", "qco[test]",
 ]
 
 [project.scripts]

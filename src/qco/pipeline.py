@@ -19,6 +19,8 @@ Novelty wiring (#31, docs/novelty_plan.md):
 
 from __future__ import annotations
 
+import math
+import random
 import time
 from dataclasses import dataclass, field
 from typing import Any
@@ -57,6 +59,13 @@ class PipelineConfig:
     calibration: str = "default"     # N4: device profile for reward + RL (qco.evaluation.calibration)
     solver_budget_s: float = 5.0     # N1: total exact re-synthesis time per run
     confident_threshold: float = 0.9 # N5: GNN score above which a numeric check suffices
+    # Ablations (#32): switch Modules A / B / D off; Module C off = enable_resynthesis
+    # and verify_rewrites both False.
+    use_rl: bool = True
+    use_gnn: bool = True
+    use_ea: bool = True
+    # N1 window selection: "gnn" | "rule" | "random" | "exhaustive" (no budget).
+    window_ranking: str = "gnn"
 
 
 @dataclass(slots=True)
@@ -101,6 +110,7 @@ class HybridOptimizer:
         self.ea = NSGA2Compiler()
         self.revert_events: list[RevertEvent] = []
         self._solver_left = self.config.solver_budget_s
+        self._solver_spent = 0.0
         self._unverified: set[int] = set()
 
     def _check(self, original, rewrite, checker: EquivalenceChecker | None = None) -> EquivalenceResult:
@@ -166,7 +176,7 @@ class HybridOptimizer:
         variants = [original]
 
         # Module A: reorder / commute.
-        scheduled = self.rl.schedule(original)
+        scheduled = self.rl.schedule(original) if self.config.use_rl else original
         if not verify or self.revert_rewrite(original, scheduled, None, block_idx, "module_a_schedule")[1]:
             variants.append(scheduled)
         base = variants[-1]
@@ -174,7 +184,7 @@ class HybridOptimizer:
         # Module B: drop non-overlapping inverse pairs, gated by confidence (N5).
         drop: set[int] = set()
         applied = []
-        for c in self.gnn.predict(base):
+        for c in (self.gnn.predict(base) if self.config.use_gnn else []):
             if c.kind == "inverse_pair" and c.a not in drop and c.b not in drop:
                 drop.update({c.a, c.b})
                 applied.append(c)
@@ -206,12 +216,7 @@ class HybridOptimizer:
             return None
         rc = self.resynthesizer.config
         windows = partition_circuit(ir, max_block_gates=rc.max_gates, max_block_qubits=rc.max_qubits)
-        # ponytail: window score = summed GNN candidate scores (rule-based until
-        # #28's window head lands), ties broken by size; swap in the pooled head then.
-        ranked = sorted(
-            windows,
-            key=lambda w: (-sum(c.score for c in self.gnn.predict(w.ir, threshold=0.0)), -len(w.ir)),
-        )
+        ranked = self._rank_windows(windows)
         replaced: dict[int, IntermediateRepresentation] = {}
         for w in ranked:
             if self._solver_left <= 0:
@@ -221,7 +226,9 @@ class HybridOptimizer:
             t0 = time.perf_counter()
             timeout = min(rc.timeout_s, self._solver_left)
             new_ir, _status, _ = self.resynthesizer.resynthesize(w.ir, timeout_s=timeout)
-            self._solver_left -= time.perf_counter() - t0
+            spent = time.perf_counter() - t0
+            self._solver_left -= spent
+            self._solver_spent += spent
             if new_ir.gate_count() >= w.ir.gate_count():
                 continue
             if not self.config.verify_rewrites or self.revert_rewrite(
@@ -235,12 +242,31 @@ class HybridOptimizer:
             out.gates.extend(replaced.get(w.index, w.ir).gates)
         return out
 
+    def _rank_windows(self, windows: list[Block]) -> list[Block]:
+        """Order windows for re-synthesis (N1); ties broken by size."""
+        mode = self.config.window_ranking
+        if mode == "random":
+            return random.Random(len(windows)).sample(windows, len(windows))
+        if mode == "exhaustive":
+            return windows
+        if mode == "rule":
+            score = lambda w: sum(c.score for c in rule_based_candidates(w.ir))
+        elif mode == "gnn":
+            # ponytail: summed GNN candidate scores (rule-based until #28's
+            # window-level head lands); swap in the pooled head then.
+            score = lambda w: sum(c.score for c in self.gnn.predict(w.ir, threshold=0.0))
+        else:
+            raise ValueError(f"unknown window_ranking {mode!r}")
+        return sorted(windows, key=lambda w: (-score(w), -len(w.ir)))
+
     # -- full pipeline -----------------------------------------------------
     def run(self, source) -> PipelineResult:
         circuit: IntermediateRepresentation = parse(source)
         self.revert_events = []
         self._unverified = set()
-        self._solver_left = self.config.solver_budget_s
+        exhaustive = self.config.window_ranking == "exhaustive"
+        self._solver_left = math.inf if exhaustive else self.config.solver_budget_s
+        self._solver_spent = 0.0
         verified = True
         rewards: list[float] = []
         variants: list[list[IntermediateRepresentation]] = []
@@ -284,7 +310,10 @@ class HybridOptimizer:
                 break
 
         # Stage 5 (N3): NSGA-II recombines verified block variants -> certified front.
-        front = self.ea.evolve([circuit], block_variants=variants)
+        if self.config.use_ea:
+            front = self.ea.evolve([circuit], block_variants=variants)
+        else:
+            front = [self.ea.score(circuit)]
         if self.config.verify_rewrites and circuit.num_qubits <= 8:
             assert all(self.checker.check(circuit, p.circuit).equivalent for p in front), \
                 "N3 invariant broken: NSGA-II front member not equivalent"
@@ -296,7 +325,7 @@ class HybridOptimizer:
             reverts=len(self.revert_events),
             revert_events=list(self.revert_events),
             unverified_blocks=len(self._unverified),
-            solver_time_s=self.config.solver_budget_s - self._solver_left,
+            solver_time_s=self._solver_spent,
             reward_history=rewards,
         )
 
