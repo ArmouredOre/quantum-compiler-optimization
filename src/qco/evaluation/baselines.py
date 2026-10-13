@@ -12,6 +12,7 @@ that row instead of reporting a fake 0% reduction.
 
 from __future__ import annotations
 
+import functools
 from typing import Callable
 
 from qco.graphs.hypergraph import gate_cost
@@ -30,6 +31,24 @@ def cx_cost(ir: IntermediateRepresentation) -> int:
     return sum(gate_cost(g.name) for g in ir.gates if g.is_multi_qubit)
 
 
+def _guard(tool: str):
+    """Turn a tool crash on one circuit into ``Unsupported`` (row skipped, run continues)."""
+
+    def wrap(fn: Optimizer) -> Optimizer:
+        @functools.wraps(fn)
+        def run(ir: IntermediateRepresentation) -> IntermediateRepresentation:
+            try:
+                return fn(ir)
+            except Unsupported:
+                raise
+            except Exception as exc:  # noqa: BLE001 - third-party tools raise anything
+                raise Unsupported(f"{tool}: {type(exc).__name__}: {exc}") from exc
+
+        return run
+
+    return wrap
+
+
 def _back(qasm: str, ir: IntermediateRepresentation) -> IntermediateRepresentation:
     try:
         out = from_qasm2(qasm)
@@ -43,6 +62,7 @@ def qiskit_baseline(level: int) -> Optimizer:
     """``transpile(optimization_level=level)`` restricted to the IR gate set."""
     from qiskit import qasm2, transpile
 
+    @_guard(f"qiskit-O{level}")
     def run(ir: IntermediateRepresentation) -> IntermediateRepresentation:
         qc = qasm2.loads(ir.to_qasm2(), custom_instructions=qasm2.LEGACY_CUSTOM_INSTRUCTIONS)
         out = transpile(qc, basis_gates=list(ARITY), optimization_level=level, seed_transpiler=0)
@@ -54,11 +74,13 @@ def qiskit_baseline(level: int) -> Optimizer:
 def tket_baseline() -> Optimizer:
     """TKET ``FullPeepholeOptimise``, rebased to {CX, Rz, Rx, H}."""
     from pytket.circuit import OpType
-    from pytket.passes import AutoRebase, FullPeepholeOptimise
+    from pytket.passes import AutoRebase, DecomposeBoxes, FullPeepholeOptimise
     from pytket.qasm import circuit_from_qasm_str, circuit_to_qasm_str
 
+    @_guard("tket")
     def run(ir: IntermediateRepresentation) -> IntermediateRepresentation:
         c = circuit_from_qasm_str(ir.to_qasm2())
+        DecomposeBoxes().apply(c)  # pytket parses some qelib1 gates (e.g. cp) as CustomGate
         FullPeepholeOptimise().apply(c)
         AutoRebase({OpType.CX, OpType.Rz, OpType.Rx, OpType.H}).apply(c)
         return _back(circuit_to_qasm_str(c), ir)
@@ -70,11 +92,9 @@ def pyzx_baseline() -> Optimizer:
     """PyZX ``full_reduce`` + circuit extraction + ``basic_optimization``."""
     import pyzx as zx
 
+    @_guard("pyzx")
     def run(ir: IntermediateRepresentation) -> IntermediateRepresentation:
-        try:
-            g = zx.Circuit.from_qasm(ir.to_qasm2()).to_graph()
-        except Exception as exc:  # pyzx's parser rejects some qelib1 gates
-            raise Unsupported(f"pyzx: {exc}") from exc
+        g = zx.Circuit.from_qasm(ir.to_qasm2()).to_graph()
         zx.full_reduce(g)
         out = zx.basic_optimization(zx.extract_circuit(g.copy()).to_basic_gates())
         return _back(out.to_qasm(), ir)
@@ -91,6 +111,7 @@ def bqskit_baseline(level: int = 1, max_qubits: int = 8) -> Optimizer:
 
     lang = OPENQASM2Language()
 
+    @_guard("bqskit")
     def run(ir: IntermediateRepresentation) -> IntermediateRepresentation:
         if ir.num_qubits > max_qubits:
             raise Unsupported(f"bqskit: {ir.num_qubits} qubits > max_qubits={max_qubits}")

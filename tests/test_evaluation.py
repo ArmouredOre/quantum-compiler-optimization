@@ -277,3 +277,14 @@ def test_one_command_builds_every_table(tmp_path):
     for row in ("minus A (RL)", "minus D (NSGA-II)", "exhaustive", "| qco |"):
         assert row in summary
     assert (out / "summary.md").exists() and (out / "qco.csv").exists()
+
+
+def test_tool_crash_becomes_unsupported_row():
+    from qco.evaluation.baselines import _guard
+
+    @_guard("flaky")
+    def crashes(ir):
+        raise RuntimeError("Can only build replacement circuits for basic gates")
+
+    with pytest.raises(Unsupported, match="flaky: RuntimeError"):
+        crashes(IntermediateRepresentation(1))

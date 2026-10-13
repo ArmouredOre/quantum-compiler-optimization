@@ -21,6 +21,7 @@ import csv
 import glob
 import io
 import os
+import sys
 import time
 from dataclasses import dataclass, field
 from typing import Callable
@@ -133,6 +134,7 @@ def _load_suite(directory: str | None, max_qubits: int | None = None) -> list[tu
     for path in sorted(glob.glob(os.path.join(directory, "*.qasm"))):
         with open(path, "r", encoding="utf-8") as fh:
             ir = from_qasm2(fh.read())
+        ir.name = os.path.basename(path)[: -len(".qasm")]
         if max_qubits is None or ir.num_qubits <= max_qubits:
             out.append((os.path.basename(path), ir))
     return out
@@ -275,8 +277,16 @@ def main(argv: list[str] | None = None) -> str:
     ap.add_argument("--skip", nargs="*", default=[], choices=["baselines", "ablations", "windows"])
     args = ap.parse_args(argv)
 
-    def bench(opt, max_qubits=args.max_qubits):
-        return run_benchmarks(opt, args.suite, args.calibration, max_qubits=max_qubits)
+    def bench(opt, label, max_qubits=args.max_qubits):
+        def logged(ir):  # progress to stderr: full runs take tens of minutes
+            t0 = time.perf_counter()
+            try:
+                return opt(ir)
+            finally:
+                print(f"  [{label}] {ir.name} n={ir.num_qubits} {time.perf_counter() - t0:.1f}s",
+                      file=sys.stderr, flush=True)
+
+        return run_benchmarks(logged, args.suite, args.calibration, max_qubits=max_qubits)
 
     def qco(**cfg):
         return pipeline_optimizer(solver_budget_s=args.budget, calibration=args.calibration, **cfg)
@@ -286,12 +296,12 @@ def main(argv: list[str] | None = None) -> str:
                 "CX-cost = multi-qubit gates in CX-equivalents (basis-independent; tools emit different gate sets)."]
     all_reports: dict[str, BenchmarkReport] = {}
 
-    full = bench(qco())
+    full = bench(qco(), "qco")
     all_reports["qco"] = full
     if "baselines" not in args.skip:
         compared = {"qco": full}
         for name, opt in available_baselines().items():
-            compared[name] = all_reports[name] = bench(opt)
+            compared[name] = all_reports[name] = bench(opt, name)
             if name.startswith("qiskit-O"):
                 print(f"## {name}\n\n{compared[name].to_markdown()}\n", flush=True)
         sections += [summary_markdown(compared, "qco vs baselines"), per_circuit_markdown(compared)]
@@ -299,10 +309,11 @@ def main(argv: list[str] | None = None) -> str:
         ablated = {"full": full}
         for name, cfg in ABLATIONS.items():
             if cfg:
-                ablated[name] = all_reports[name] = bench(qco(**cfg))
+                ablated[name] = all_reports[name] = bench(qco(**cfg), name)
         sections.append(summary_markdown(ablated, "Ablations (full pipeline minus one module)"))
     if "windows" not in args.skip:
-        windows = {mode: bench(qco(window_ranking=mode), args.window_max_qubits) for mode in WINDOW_MODES}
+        windows = {mode: bench(qco(window_ranking=mode), f"windows-{mode}", args.window_max_qubits)
+                   for mode in WINDOW_MODES}
         all_reports.update({f"windows-{m}": r for m, r in windows.items()})
         sections.append(summary_markdown(
             windows, f"N1 window selection (circuits <= {args.window_max_qubits} qubits)"))
