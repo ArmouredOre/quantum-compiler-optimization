@@ -41,7 +41,9 @@ from qco.ir.parser import from_qasm2
 
 BENCH_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "..", "benchmarks", "circuits")
 # Committed Module A policy (Maanas, #29); used by the CLI unless --rl-policy none.
-DEFAULT_RL_POLICY = os.path.join(os.path.dirname(__file__), "..", "..", "..", "docs", "rl_training", "ppo_5q", "best.json")
+DEFAULT_RL_POLICY = os.path.normpath(
+    os.path.join(os.path.dirname(__file__), "..", "..", "..", "docs", "rl_training", "ppo_5q", "best.json")
+)
 
 CSV_FIELDS = [
     "circuit", "gate_count_before", "gate_count_after", "depth_before", "depth_after",
@@ -352,6 +354,12 @@ ABLATIONS = {
 WINDOW_MODES = ("gnn", "rule", "random", "exhaustive")
 
 
+def _shown(path: str) -> str:
+    """Repo-relative path for report headers ('none' passes through)."""
+    root = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+    return path if path == "none" else os.path.relpath(os.path.abspath(path), root)
+
+
 def main(argv: list[str] | None = None) -> str:
     ap = argparse.ArgumentParser(description="qco Stage 6: baselines, ablations, window selection")
     ap.add_argument("--suite", default=None, help="directory of .qasm files (default: committed suite)")
@@ -387,7 +395,7 @@ def main(argv: list[str] | None = None) -> str:
 
     os.makedirs(args.out, exist_ok=True)
     sections = [f"# qco evaluation\n\nCalibration `{args.calibration}`, solver budget {args.budget}s/circuit, "
-                f"RL policy `{args.rl_policy}`, GNN model `{args.gnn_model}`. "
+                f"RL policy `{_shown(args.rl_policy)}`, GNN model `{_shown(args.gnn_model)}`. "
                 "CX-cost = multi-qubit gates in CX-equivalents (basis-independent; tools emit different gate sets)."]
     all_reports: dict[str, BenchmarkReport] = {}
 
