@@ -3,6 +3,8 @@
 import math
 import random
 
+import pytest
+
 from qco.ir import IntermediateRepresentation
 from qco.modules.rl_scheduler import RLScheduler
 from qco.modules.gnn_cancellation.model import GNNCancellationPredictor
@@ -52,9 +54,9 @@ def test_rl_scheduler_preserves_gate_count():
 
 
 def test_nsga2_genetic_search_finds_non_dominated_front():
-    # Sprint 2: real pymoo NSGA-II with crossover/mutation over gate sequences,
-    # so the exact front is no longer deterministic (search can beat the seed) -
-    # check the search properties instead of an exact circuit.
+    # Real pymoo NSGA-II over block-variant genomes (N3), so the exact front
+    # isn't deterministic (search can beat the seed) - check the search
+    # properties instead of an exact circuit.
     seed = IntermediateRepresentation(2)
     seed.add("h", [0]).add("h", [0]).add("cx", [0, 1])
     cfg = NSGA2Config(pop_size=12, generations=6)
@@ -76,10 +78,7 @@ def test_nsga2_genetic_search_finds_non_dominated_front():
 def test_mutation_operators_never_emit_an_invalid_circuit():
     # commute / drop-candidate / reorder are equivalence-preserving by
     # construction (Module B's gates_commute / rule_based_candidates, issues
-    # #6 and #11, closed). Crossover is excluded from this claim - splicing
-    # two different circuits together fundamentally isn't equivalence-
-    # preserving, which is why the pipeline still re-verifies NSGA-II's front
-    # before returning it (see test_pipeline_end_to_end_qft_like below).
+    # #6 and #11, closed). Block-level crossover is covered below.
     checker = EquivalenceChecker()
     rng = random.Random(7)
 
@@ -95,6 +94,39 @@ def test_mutation_operators_never_emit_an_invalid_circuit():
         for _ in range(25):
             current = mutate_validity_preserving(current, rng)
             assert checker.check(base, current).equivalent
+
+
+def test_nsga2_front_is_equivalent_without_filtering():
+    # N3 (#30): crossover only recombines per-block variant indices, so every
+    # front member is equivalent by construction - no post-hoc filter.
+    pytest.importorskip("pymoo")
+    checker = EquivalenceChecker(backend="numeric")
+    ir = IntermediateRepresentation(4, name="mix4")
+    for _ in range(3):
+        ir.add("h", [0]).add("h", [0]).add("cx", [0, 1]).add("t", [2]).add("cx", [1, 2])
+        ir.add("rz", [3], [0.3]).add("cx", [2, 3]).add("cx", [2, 3]).add("x", [1])
+    cfg = NSGA2Config(pop_size=16, generations=10)
+    front = NSGA2Compiler(config=cfg).evolve([ir])
+    assert front
+    assert all(checker.check(ir, p.circuit).equivalent for p in front)
+    assert min(p.objective.gate_count for p in front) < ir.gate_count()
+
+
+def test_nsga2_block_variants_argument():
+    # Caller-supplied verified variants: block 0 has a cheaper equivalent
+    # variant, block 1 only itself. The search must find the cheap combination
+    # and never produce anything non-equivalent.
+    pytest.importorskip("pymoo")
+    checker = EquivalenceChecker(backend="numeric")
+    b0 = IntermediateRepresentation(2).add("h", [0]).add("h", [0]).add("cx", [0, 1])
+    b0_cheap = IntermediateRepresentation(2).add("cx", [0, 1])
+    b1 = IntermediateRepresentation(2).add("t", [1]).add("cx", [1, 0])
+    full = IntermediateRepresentation(2, gates=b0.gates + b1.gates)
+    front = NSGA2Compiler(config=NSGA2Config(pop_size=8, generations=5)).evolve(
+        [], block_variants=[[b0, b0_cheap], [b1]]
+    )
+    assert all(checker.check(full, p.circuit).equivalent for p in front)
+    assert min(p.objective.gate_count for p in front) == 3
 
 
 def test_nsga2_falls_back_without_pymoo(monkeypatch):
