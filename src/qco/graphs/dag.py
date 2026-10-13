@@ -9,9 +9,42 @@ provided for modules that want the full library.
 
 from __future__ import annotations
 
+from collections import deque
 from dataclasses import dataclass, field
 
-from qco.ir.intermediate_representation import IntermediateRepresentation
+from qco.ir.intermediate_representation import Gate, IntermediateRepresentation
+
+# Commutation table: for each gate, the Pauli it commutes with on each of its
+# qubits (positionally), or None. E.g. cx commutes with Z on the control and X
+# on the target. Two gates commute if, on every qubit they share, both commute
+# with the same Pauli P: each is then block-diagonal in P's eigenbasis there,
+# and the blocks act on disjoint remaining qubits. Sufficient, not necessary.
+_PAULI_ACTION: dict[str, tuple[str | None, ...]] = {
+    "id": ("I",),
+    "z": ("Z",), "s": ("Z",), "sdg": ("Z",), "t": ("Z",), "tdg": ("Z",), "rz": ("Z",), "p": ("Z",),
+    "x": ("X",), "rx": ("X",),
+    "y": ("Y",), "ry": ("Y",),
+    "h": (None,),
+    "cz": ("Z", "Z"), "cp": ("Z", "Z"), "crz": ("Z", "Z"), "rzz": ("Z", "Z"),
+    "cs": ("Z", "Z"), "csdg": ("Z", "Z"),
+    "cx": ("Z", "X"), "crx": ("Z", "X"), "rxx": ("X", "X"),
+    "cy": ("Z", "Y"), "cry": ("Z", "Y"), "ryy": ("Y", "Y"),
+    "ch": ("Z", None), "swap": (None, None),
+    "ccx": ("Z", "Z", "X"), "cswap": ("Z", None, None),
+}
+
+
+def commutes(a: Gate, b: Gate) -> bool:
+    """True if ``a`` and ``b`` provably commute (False means 'not sure')."""
+    if a.name == b.name and a.qubits == b.qubits:
+        return True  # same gate type on same wires; params may differ (rotations commute)
+    pa = dict(zip(a.qubits, _PAULI_ACTION.get(a.name, (None,) * len(a.qubits))))
+    pb = dict(zip(b.qubits, _PAULI_ACTION.get(b.name, (None,) * len(b.qubits))))
+    for q in pa.keys() & pb.keys():
+        x, y = pa[q], pb[q]
+        if not (x == "I" or y == "I" or (x is not None and x == y)):
+            return False
+    return True
 
 
 @dataclass(slots=True)
@@ -31,10 +64,10 @@ class GateDAG:
 
     def topological_order(self) -> list[int]:
         indeg = {i: len(self.pred.get(i, ())) for i in range(self.num_gates)}
-        queue = [i for i, d in indeg.items() if d == 0]
+        queue = deque(i for i, d in indeg.items() if d == 0)
         order: list[int] = []
         while queue:
-            u = queue.pop(0)
+            u = queue.popleft()
             order.append(u)
             for v in sorted(self.succ.get(u, ())):
                 indeg[v] -= 1
