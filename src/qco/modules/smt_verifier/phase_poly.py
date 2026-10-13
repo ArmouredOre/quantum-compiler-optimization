@@ -9,6 +9,7 @@ Encodes equivalence into Z3 using bit-vectors and linear arithmetic.
 
 from __future__ import annotations
 
+import functools
 import math
 from dataclasses import dataclass
 from typing import Any, Sequence
@@ -237,8 +238,10 @@ def check_phase_poly(
             active_bits = [x_bits[i] for i in range(n) if (mask & (1 << i))]
             if len(active_bits) == 1:
                 p_cond = active_bits[0]
+            elif len(active_bits) == 2:
+                p_cond = _z3.Xor(active_bits[0], active_bits[1])
             else:
-                p_cond = _z3.Xor(*active_bits)
+                p_cond = functools.reduce(_z3.Xor, active_bits)
             d_val = _z3.RealVal(str(round(d, 8)))
             term_real = _z3.If(p_cond, d_val, _z3.RealVal("0"))
             phase_terms_expr.append(term_real)
