@@ -254,3 +254,55 @@ def test_resynthesized_windows_are_stitched_back_in():
     assert best.gate_count() < c.gate_count()
     assert res.solver_time_s > 0
     assert EquivalenceChecker().check(c, best).equivalent
+
+
+# --- #36: trained Stage-4 modules + reward hook ----------------------------------
+
+import os
+
+from qco.pipeline import RewardEvent
+
+RL_POLICY = "docs/rl_training/ppo_5q/best.json"
+
+
+def test_reward_hook_gets_block_and_iteration_events():
+    events: list[RewardEvent] = []
+    ir = parse("benchmarks/circuits/grover_w5_i2.qasm")
+    res = optimize(ir, PipelineConfig(reward_hook=events.append, solver_budget_s=0.5, calibration="default"))
+    per_block = [e for e in events if e.block_index >= 0]
+    whole = [e for e in events if e.block_index == -1]
+    assert len(per_block) == res.blocks
+    assert [e.reward for e in whole] == res.reward_history
+    assert all(e.calibration == "default" and e.iteration == 0 for e in events)
+    from qco.evaluation.metrics import scalarized_reward
+
+    e = per_block[0]
+    assert e.reward == scalarized_reward(e.before, e.after, calibration="default")
+
+
+@pytest.mark.skipif(not os.path.exists(RL_POLICY), reason="committed RL policy missing")
+def test_pipeline_uses_trained_rl_policy():
+    ir = parse("benchmarks/circuits/rand_cliffordt_n5.qasm")
+    cfg = dict(solver_budget_s=0.5, use_ea=False)
+    trained = optimize(ir, PipelineConfig(rl_policy_path=RL_POLICY, **cfg))
+    untrained = optimize(ir, PipelineConfig(**cfg))
+    best = trained.pareto_front[0].circuit
+    assert EquivalenceChecker().check(ir, best).equivalent
+    assert best.gate_count() < untrained.pareto_front[0].circuit.gate_count()
+
+
+def test_pipeline_loads_trained_gnn(tmp_path):
+    pytest.importorskip("torch")
+    pytest.importorskip("torch_geometric")
+    from qco.modules.gnn_cancellation.model import GNNConfig, GNNCancellationPredictor
+
+    train = [parse(f"benchmarks/circuits/{n}.qasm") for n in ("grover_w3_i1", "rand_cliffordt_n5")]
+    model = GNNCancellationPredictor(GNNConfig(epochs=2))
+    model.fit(train, val_fraction=0.0, seed=0)
+    path = model.save(tmp_path / "gnn.pt")
+
+    ir = parse("benchmarks/circuits/grover_w3_i2.qasm")
+    opt = HybridOptimizer(PipelineConfig(gnn_model_path=str(path), solver_budget_s=0.5))
+    assert opt.gnn._net is not None
+    res = opt.run(ir)
+    assert all(EquivalenceChecker().check(ir, p.circuit).equivalent for p in res.pareto_front)

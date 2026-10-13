@@ -23,7 +23,7 @@ import math
 import random
 import time
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Callable
 
 from qco.evaluation.metrics import scalarized_reward
 from qco.graphs.partitioning import Block, partition_circuit
@@ -66,6 +66,26 @@ class PipelineConfig:
     use_ea: bool = True
     # N1 window selection: "gnn" | "rule" | "random" | "exhaustive" (no budget).
     window_ranking: str = "gnn"
+    # Trained Stage-4 modules (#36): None keeps the untrained stand-ins.
+    rl_policy_path: str | None = None       # RLScheduler.load (e.g. docs/rl_training/ppo_5q/best.json)
+    gnn_model_path: str | None = None       # GNNCancellationPredictor.load (needs torch)
+    # Reward hook (#35): called with a RewardEvent per block and per feedback iteration.
+    reward_hook: "Callable[[RewardEvent], None] | None" = None
+
+
+@dataclass(slots=True)
+class RewardEvent:
+    """Stage 6 -> Module A closed-loop signal handed to ``PipelineConfig.reward_hook``.
+
+    ``block_index`` is -1 for the whole-circuit event at the end of an iteration.
+    ``reward`` = ``scalarized_reward(before, after, calibration=calibration)``.
+    """
+    iteration: int
+    block_index: int
+    before: IntermediateRepresentation
+    after: IntermediateRepresentation
+    reward: float
+    calibration: str
 
 
 @dataclass(slots=True)
@@ -102,8 +122,12 @@ class HybridOptimizer:
     def __init__(self, config: PipelineConfig | None = None):
         self.config = config or PipelineConfig()
         self.rl = RLScheduler()
-        self.rl.config.calibration = self.config.calibration
+        if self.config.rl_policy_path:
+            self.rl.load(self.config.rl_policy_path)
+        self.rl.config.calibration = self.config.calibration  # after load: load restores its own config
         self.gnn = GNNCancellationPredictor()
+        if self.config.gnn_model_path:
+            self.gnn.load(self.config.gnn_model_path)
         self.checker = EquivalenceChecker()
         self.cheap_checker = EquivalenceChecker(backend="numeric")
         self.resynthesizer = BoundedResynthesizer(self.config.resynth_config)
@@ -259,6 +283,14 @@ class HybridOptimizer:
             raise ValueError(f"unknown window_ranking {mode!r}")
         return sorted(windows, key=lambda w: (-score(w), -len(w.ir)))
 
+    def _emit_reward(self, iteration, block_index, before, after) -> float:
+        reward = scalarized_reward(before, after, calibration=self.config.calibration)
+        if self.config.reward_hook is not None:
+            self.config.reward_hook(
+                RewardEvent(iteration, block_index, before, after, reward, self.config.calibration)
+            )
+        return reward
+
     # -- full pipeline -----------------------------------------------------
     def run(self, source) -> PipelineResult:
         circuit: IntermediateRepresentation = parse(source)
@@ -271,13 +303,15 @@ class HybridOptimizer:
         rewards: list[float] = []
         variants: list[list[IntermediateRepresentation]] = []
 
-        for _ in range(max(self.config.feedback_iterations, 1)):
+        for iteration in range(max(self.config.feedback_iterations, 1)):
             blocks = partition_circuit(
                 circuit,
                 max_block_gates=self.config.max_block_gates,
                 backend=self.config.partition_backend,
             )
             variants = [self._block_variants(b, idx) for idx, b in enumerate(blocks)]
+            for idx, (b, v) in enumerate(zip(blocks, variants)):
+                self._emit_reward(iteration, idx, b.ir, v[0])
 
             # Stitch the best variant of each block, in partition order.
             stitched = IntermediateRepresentation(num_qubits=circuit.num_qubits, name=circuit.name)
@@ -304,7 +338,7 @@ class HybridOptimizer:
                     variants = [[b.ir] for b in blocks]
 
             # Stage 6 -> closed loop (N4): stop once a pass stops paying off.
-            rewards.append(scalarized_reward(circuit, stitched, calibration=self.config.calibration))
+            rewards.append(self._emit_reward(iteration, -1, circuit, stitched))
             circuit = stitched
             if rewards[-1] <= 0:
                 break

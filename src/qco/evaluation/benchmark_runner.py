@@ -40,6 +40,8 @@ from qco.ir.intermediate_representation import IntermediateRepresentation
 from qco.ir.parser import from_qasm2
 
 BENCH_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "..", "benchmarks", "circuits")
+# Committed Module A policy (Maanas, #29); used by the CLI unless --rl-policy none.
+DEFAULT_RL_POLICY = os.path.join(os.path.dirname(__file__), "..", "..", "..", "docs", "rl_training", "ppo_5q", "best.json")
 
 CSV_FIELDS = [
     "circuit", "gate_count_before", "gate_count_after", "depth_before", "depth_after",
@@ -275,7 +277,14 @@ def main(argv: list[str] | None = None) -> str:
     ap.add_argument("--window-max-qubits", type=int, default=6,
                     help="window-selection runs only on circuits this small ('exhaustive' has no budget)")
     ap.add_argument("--skip", nargs="*", default=[], choices=["baselines", "ablations", "windows"])
+    ap.add_argument("--rl-policy", default=DEFAULT_RL_POLICY if os.path.exists(DEFAULT_RL_POLICY) else "none",
+                    help="trained Module A policy ('none' = untrained greedy stand-in)")
+    ap.add_argument("--gnn-model", default="none", help="trained Module B checkpoint ('none' = rule-based)")
     args = ap.parse_args(argv)
+    trained = {
+        "rl_policy_path": None if args.rl_policy == "none" else args.rl_policy,
+        "gnn_model_path": None if args.gnn_model == "none" else args.gnn_model,
+    }
 
     def bench(opt, label, max_qubits=args.max_qubits):
         def logged(ir):  # progress to stderr: full runs take tens of minutes
@@ -289,10 +298,11 @@ def main(argv: list[str] | None = None) -> str:
         return run_benchmarks(logged, args.suite, args.calibration, max_qubits=max_qubits)
 
     def qco(**cfg):
-        return pipeline_optimizer(solver_budget_s=args.budget, calibration=args.calibration, **cfg)
+        return pipeline_optimizer(solver_budget_s=args.budget, calibration=args.calibration, **trained, **cfg)
 
     os.makedirs(args.out, exist_ok=True)
-    sections = [f"# qco evaluation\n\nCalibration `{args.calibration}`, solver budget {args.budget}s/circuit. "
+    sections = [f"# qco evaluation\n\nCalibration `{args.calibration}`, solver budget {args.budget}s/circuit, "
+                f"RL policy `{args.rl_policy}`, GNN model `{args.gnn_model}`. "
                 "CX-cost = multi-qubit gates in CX-equivalents (basis-independent; tools emit different gate sets)."]
     all_reports: dict[str, BenchmarkReport] = {}
 
