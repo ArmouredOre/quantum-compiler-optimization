@@ -203,25 +203,35 @@ def build_pyg_data(ir: IntermediateRepresentation):
 # Inverse / commute / chain helpers
 # ---------------------------------------------------------------------------
 
-def _angle_close(a: float, b: float, tol: float = _ANGLE_TOL) -> bool:
-    delta = abs(a - b) % _TWO_PI
-    return min(delta, _TWO_PI - delta) < tol
+# Controlled rotations repeat only every 4*pi: crz(2*pi) is controlled(-I), i.e. a
+# Z on the control - not a global phase. Every other parametric gate is
+# periodic in 2*pi up to global phase.
+_PERIOD_4PI = frozenset({"crx", "cry", "crz"})
 
 
-def _params_close(a: tuple[float, ...], b: tuple[float, ...]) -> bool:
+def _angle_period(name: str) -> float:
+    return 2.0 * _TWO_PI if name in _PERIOD_4PI else _TWO_PI
+
+
+def _angle_close(a: float, b: float, tol: float = _ANGLE_TOL, period: float = _TWO_PI) -> bool:
+    delta = abs(a - b) % period
+    return min(delta, period - delta) < tol
+
+
+def _params_close(a: tuple[float, ...], b: tuple[float, ...], period: float = _TWO_PI) -> bool:
     if len(a) != len(b):
         return False
-    return all(_angle_close(x, y) for x, y in zip(a, b))
+    return all(_angle_close(x, y, period=period) for x, y in zip(a, b))
 
 
-def _angles_sum_identity(params_list: list[tuple[float, ...]]) -> bool:
+def _angles_sum_identity(params_list: list[tuple[float, ...]], period: float = _TWO_PI) -> bool:
     if not params_list:
         return False
     width = len(params_list[0])
     if any(len(p) != width for p in params_list):
         return False
     totals = [sum(p[i] for p in params_list) for i in range(width)]
-    return all(_angle_close(t, 0.0) for t in totals)
+    return all(_angle_close(t, 0.0, period=period) for t in totals)
 
 
 def are_inverses(g: Gate, h: Gate) -> bool:
@@ -232,7 +242,7 @@ def are_inverses(g: Gate, h: Gate) -> bool:
         inv = g.inverse()
     except NotImplementedError:
         return False
-    return inv.name == h.name and _params_close(inv.params, h.params)
+    return inv.name == h.name and _params_close(inv.params, h.params, _angle_period(g.name))
 
 
 def _shares_qubits(g: Gate, h: Gate) -> bool:
@@ -397,7 +407,7 @@ def rule_based_candidates(ir: IntermediateRepresentation) -> list[CancellationCa
             chain = tuple(run)
 
             if name in PARAMETRIC:
-                if _angles_sum_identity(params):
+                if _angles_sum_identity(params, _angle_period(name)):
                     _add_candidate(out, seen, run[0], run[-1], "identity_chain", chain)
                 else:
                     _add_candidate(out, seen, run[0], run[-1], "rotation_merge", chain)
