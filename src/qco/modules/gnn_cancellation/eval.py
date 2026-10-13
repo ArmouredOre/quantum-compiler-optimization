@@ -221,4 +221,87 @@ def write_pr_table(path: str | Path, markdown: str, *, header: str = "") -> None
     dest = Path(path)
     dest.parent.mkdir(parents=True, exist_ok=True)
     dest.write_text((header + "\n\n" if header else "") + markdown, encoding="utf-8")
-    
+
+import math
+
+def sigmoid(z: float) -> float:
+    return 1 / (1 + math.exp(-z)) if z >= 0 else math.exp(z) / (1 + math.exp(z))
+
+def _nll(logits, labels, T):
+    tot = 0.0
+    for z, y in zip(logits, labels):
+        p = min(max(sigmoid(z / T), 1e-12), 1 - 1e-12)
+        tot -= y * math.log(p) + (1 - y) * math.log(1 - p)
+    return tot / max(len(labels), 1)
+
+def fit_temperature(logits, labels, lo=0.05, hi=20.0, n=200) -> float:
+    if len(labels) < 2 or len(set(labels)) < 2:
+        return 1.0
+    grid = [lo * (hi / lo) ** (i / (n - 1)) for i in range(n)] + [1.0]
+    return min(grid, key=lambda T: _nll(logits, labels, T))
+
+def reliability_bins(probs, labels, n_bins=10):
+    bins = [[] for _ in range(n_bins)]
+    for p, y in zip(probs, labels):
+        bins[min(int(p * n_bins), n_bins - 1)].append((p, y))
+    return [(i / n_bins, (i + 1) / n_bins, len(b),
+             sum(p for p, _ in b) / len(b), sum(y for _, y in b) / len(b))
+            for i, b in enumerate(bins) if b]
+
+def expected_calibration_error(probs, labels, n_bins=10) -> float:
+    n = len(labels)
+    return sum(c / n * abs(conf - acc)
+               for _, _, c, conf, acc in reliability_bins(probs, labels, n_bins)) if n else 0.0
+
+def plot_reliability(curves: dict, path) -> None:
+    """curves: name -> (probs, labels). Points are annotated with bin counts. Needs matplotlib."""
+    import matplotlib; matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    fig, ax = plt.subplots(figsize=(5, 5))
+    ax.plot([0, 1], [0, 1], "k--", lw=1, label="perfect")
+    for name, (p, y) in curves.items():
+        rows = reliability_bins(p, y)
+        ax.plot([r[3] for r in rows], [r[4] for r in rows], "o-",
+                label=f"{name} (ECE={expected_calibration_error(p, y):.3f})")
+        for r in rows:
+            ax.annotate(str(r[2]), (r[3], r[4]), fontsize=6,
+                        xytext=(2, 3), textcoords="offset points")
+    ax.set_xlabel("confidence"); ax.set_ylabel("empirical reduction rate")
+    ax.set_title("Reliability (labels = bin counts)", fontsize=9)
+    ax.legend()
+    Path(path).parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(path, dpi=150, bbox_inches="tight"); plt.close(fig)
+
+# --- window ranking ---------------------------------------------------------
+
+def precision_at_k(per_circuit, k, rng=None) -> float:
+    """per_circuit: list of [(score, label)], label in {0, 1, None}. Unknown labels are ignored.
+    Ties are broken randomly so tie-heavy systems are not rewarded by window position."""
+    rng = rng or random.Random(0)
+    hits = tot = 0
+    for items in per_circuit:
+        known = [(s, y) for s, y in items if y is not None]
+        rng.shuffle(known)
+        known.sort(key=lambda t: -t[0])          # stable -> random order among ties
+        top = known[:k]
+        hits += sum(y for _, y in top); tot += len(top)
+    return hits / tot if tot else 0.0
+
+def rule_window_scorer(ir, windows):
+    """Baseline: number of rule-based candidates fully inside the window."""
+    cands = rule_based_candidates(ir)
+    return [float(sum(1 for c in cands if s <= c.a and c.b < e)) for s, e in windows]
+
+def window_ranking_table(test, systems, ks=(1, 3, 5), repeats=20, seed=0) -> str:
+    """test: list[(ir, list[WindowLabel])]; systems: name -> fn(ir, windows) -> list[float]."""
+    known = [r.label for _, rows in test for r in rows if r.label is not None]
+    lines = [f"Base rate of reducible windows: {sum(known)}/{len(known)}\n",
+             "| System | " + " | ".join(f"P@{k}" for k in ks) + " |",
+             "|---|" + "---|" * len(ks)]
+    for name, fn in systems.items():
+        scored = [[(s, r.label) for s, r in zip(fn(ir, [(r.start, r.end) for r in rows]), rows)]
+                  for ir, rows in test]
+        vals = [sum(precision_at_k(scored, k, random.Random(seed + i)) for i in range(repeats)) / repeats
+                for k in ks]
+        lines.append(f"| {name} | " + " | ".join(f"{v:.3f}" for v in vals) + " |")
+    return "\n".join(lines) + "\n"

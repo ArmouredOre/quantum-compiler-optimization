@@ -4,6 +4,9 @@ A message-passing stack embeds each gate; a scoring head ranks overlapping
 gate pairs.  Training labels come from the Sprint-1 rule-based generator.
 Until ``fit`` (or ``load``) has run, :meth:`GNNCancellationPredictor.predict`
 falls back to that generator so the pipeline stays usable without torch.
+
+Issue #28 adds a window-level (graph-pooled) head trained on exact
+re-synthesis labels, with temperature-scaled confidence.
 """
 
 from __future__ import annotations
@@ -12,10 +15,16 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 import random
+import math
 
 from qco.ir.intermediate_representation import PARAMETRIC, IntermediateRepresentation
 from qco.modules.gnn_cancellation.dataset import load_training_dataset, sample_training_pairs
-from qco.modules.gnn_cancellation.eval import held_out_split, metrics_from_counts
+from qco.modules.gnn_cancellation.eval import (
+    fit_temperature,
+    held_out_split,
+    metrics_from_counts,
+    sigmoid,
+)
 from qco.modules.gnn_cancellation.features import (
     EDGE_FEATURE_DIM,
     FEATURE_DIM,
@@ -42,6 +51,20 @@ except ImportError:  # pragma: no cover - CI installs only ``.[test]``
 
 _GNN_EXTRA = "GNNCancellationPredictor requires the `gnn` extra: pip install -e '.[gnn]'"
 
+WINDOW_EXTRA_DIM = 6
+
+
+def _window_extras(ir, s, e, cands=(), use_rules=True) -> list[float]:
+    """Hand features: size, active qubits, 2q fraction + rule-candidate evidence."""
+    gs = ir.gates[s:e]
+    n = max(len(gs), 1)
+    nq = len({q for g in gs for q in g.qubits})
+    base = [len(gs) / 12.0, nq / 4.0, sum(1 for g in gs if len(g.qubits) == 2) / n]
+    if not use_rules:
+        return base + [0.0, 0.0, 0.0]
+    inside = [c for c in cands if s <= c.a and c.b < e]
+    merge = any(c.kind != "inverse_pair" for c in inside)
+    return base + [math.log1p(len(inside)) / math.log(4.0), float(bool(inside)), float(merge)]
 
 @dataclass(slots=True)
 class GNNConfig:
@@ -51,6 +74,7 @@ class GNNConfig:
     dropout: float = 0.1
     epochs: int = 100
     lr: float = 1e-3
+    rule_features: bool = True
 
 
 @dataclass(slots=True)
@@ -59,6 +83,13 @@ class FitResult:
     threshold: float
     n_circuits: int
     n_epochs: int
+
+
+@dataclass(slots=True)
+class WindowFitResult:
+    losses: list[float]
+    temperature: float
+    n_val_windows: int
 
 
 def _require_torch() -> None:
@@ -74,6 +105,7 @@ def _config_dict(config: GNNConfig) -> dict[str, Any]:
         "dropout": config.dropout,
         "epochs": config.epochs,
         "lr": config.lr,
+        "rule_features": config.rule_features,
     }
 
 
@@ -90,7 +122,7 @@ def _prepare_edges(edge_index, num_nodes: int):
 if torch is not None:
 
     class CancellationGNN(nn.Module):
-        """GraphSAGE or GAT encoder plus an MLP scoring head over gate pairs."""
+        """GraphSAGE or GAT encoder plus MLP heads over gate pairs and windows."""
 
         def __init__(self, config: GNNConfig, in_dim: int = FEATURE_DIM):
             super().__init__()
@@ -119,6 +151,13 @@ if torch is not None:
                 nn.Dropout(config.dropout),
                 nn.Linear(hidden, 1),
             )
+            # Window head (#28): mean || max pooled gate embeddings + hand features.
+            self.window_scorer = nn.Sequential(
+                nn.Linear(hidden * 2 + WINDOW_EXTRA_DIM, hidden),
+                nn.ReLU(),
+                nn.Dropout(config.dropout),
+                nn.Linear(hidden, 1),
+            )
 
         def encode(self, x, edge_index):
             if x.size(0) == 0:
@@ -141,6 +180,15 @@ if torch is not None:
                 dim=-1,
             )
             return self.scorer(feat).squeeze(-1)
+
+        def score_windows(self, h, windows, extras):
+            """Graph-pooled (mean || max over the window's gate embeddings) + extras -> logit."""
+            if not windows:
+                return h.new_zeros((0,))
+            pooled = torch.stack(
+                [torch.cat([h[s:e].mean(0), h[s:e].max(0).values]) for s, e in windows]
+            )
+            return self.window_scorer(torch.cat([pooled, extras], dim=-1)).squeeze(-1)
 
 else:  # pragma: no cover
     CancellationGNN = None  # type: ignore[misc, assignment]
@@ -181,6 +229,8 @@ class GNNCancellationPredictor:
         self.config = config or GNNConfig()
         self._net = None
         self._threshold = 0.5
+        self._temperature = 1.0  # window-head calibration (#28)
+        self._rule_cache: dict = {}
 
     def fit(
         self,
@@ -260,8 +310,86 @@ class GNNCancellationPredictor:
         cands.sort(key=lambda c: -c.score)
         return cands
 
+    # -- window head (#28) ---------------------------------------------------
+
+    def fit_windows(
+        self, train, val, *, epochs: int | None = None, seed: int = 0
+    ) -> WindowFitResult:
+        """Train the window head on re-synthesis labels, then fit the temperature on ``val``.
+
+        ``train`` / ``val``: ``list[(ir, list[WindowLabel])]``, split BY CIRCUIT.
+        Windows with ``label is None`` (timeouts etc.) are skipped.
+        """
+        _require_torch()
+        rng = random.Random(seed)
+        torch.manual_seed(seed)
+        if self._net is None:
+            self._net = CancellationGNN(self.config)
+        net = self._net
+        opt = torch.optim.Adam(net.parameters(), lr=self.config.lr)
+
+        losses: list[float] = []
+        for _ in range(epochs or self.config.epochs):
+            net.train()
+            order = list(range(len(train)))
+            rng.shuffle(order)
+            running, steps = 0.0, 0
+            for i in order:
+                ir, rows = train[i]
+                rows = [r for r in rows if r.label is not None]
+                if not rows:
+                    continue
+                y = torch.tensor([float(r.label) for r in rows], dtype=torch.float32)
+                opt.zero_grad(set_to_none=True)
+                logits = self._window_forward(ir, [(r.start, r.end) for r in rows])
+                # Plain BCE (no pos_weight): pos_weight shifts logits, which a
+                # temperature cannot undo.
+                loss = F.binary_cross_entropy_with_logits(logits, y)
+                loss.backward()
+                opt.step()
+                running += float(loss.item())
+                steps += 1
+            losses.append(running / max(steps, 1))
+
+        net.eval()
+        z: list[float] = []
+        y_val: list[int] = []
+        for ir, rows in val:
+            rows = [r for r in rows if r.label is not None]
+            if not rows:
+                continue
+            z += self.window_logits(ir, [(r.start, r.end) for r in rows])
+            y_val += [int(r.label) for r in rows]
+        self._temperature = fit_temperature(z, y_val)
+        return WindowFitResult(losses, self._temperature, len(y_val))
+
+    def window_logits(self, ir: IntermediateRepresentation, windows) -> list[float]:
+        """Raw (uncalibrated) window logits."""
+        _require_torch()
+        if self._net is None:
+            raise RuntimeError("window head not trained; call fit_windows() or load() first")
+        windows = list(windows)
+        if not windows:
+            return []
+        self._net.eval()
+        with torch.no_grad():
+            return self._window_forward(ir, windows).tolist()
+
+    def score_windows(self, ir: IntermediateRepresentation, windows) -> list[float]:
+        """Calibrated P(window is reducible by exact re-synthesis)."""
+        t = self._temperature
+        return [sigmoid(z / t) for z in self.window_logits(ir, windows)]
+
+    def rank_windows(self, ir: IntermediateRepresentation, windows, top_k: int | None = None):
+        """``[((start, end), prob), ...]`` sorted by calibrated confidence, best first."""
+        windows = list(windows)
+        ranked = sorted(zip(windows, self.score_windows(ir, windows)), key=lambda t: -t[1])
+        return ranked[:top_k] if top_k else ranked
+
+    # -- persistence ---------------------------------------------------------
+
     def save(self, path: str | Path) -> Path:
-        """Write config + weights + calibrated threshold to ``path``."""
+        """Write config + weights + calibrated threshold/temperature to ``path``."""
         _require_torch()
         if self._net is None:
             raise RuntimeError("nothing to save; call fit() or load() first")
@@ -272,6 +400,7 @@ class GNNCancellationPredictor:
                 "config": _config_dict(self.config),
                 "state_dict": self._net.state_dict(),
                 "threshold": self._threshold,
+                "temperature": self._temperature,
                 "feature_dim": FEATURE_DIM,
             },
             dest,
@@ -289,10 +418,17 @@ class GNNCancellationPredictor:
                 f"checkpoint feature_dim={blob['feature_dim']} != FEATURE_DIM={FEATURE_DIM}"
             )
         net = CancellationGNN(self.config)
-        net.load_state_dict(blob["state_dict"])
+        # strict=False so pre-#28 checkpoints (no window_scorer) still load.
+        res = net.load_state_dict(blob["state_dict"], strict=False)
+        bad = [k for k in res.missing_keys if not k.startswith("window_scorer")] + list(
+            res.unexpected_keys
+        )
+        if bad:
+            raise ValueError(f"checkpoint mismatch: {bad}")
         net.eval()
         self._net = net
         self._threshold = float(blob.get("threshold", 0.5))
+        self._temperature = float(blob.get("temperature", 1.0))
         return self
 
     # -- internals -----------------------------------------------------------
@@ -322,6 +458,26 @@ class GNNCancellationPredictor:
             h = self._net.encode(x, edge_index)
             logits = self._net.score_pairs(h, pair_index, pair_attr)
         return pairs, logits
+
+    def _rules(self, ir):
+        if not self.config.rule_features:
+            return []
+        key = (ir.name, len(ir.gates))
+        if key not in self._rule_cache:
+            self._rule_cache[key] = rule_based_candidates(ir)
+        return self._rule_cache[key]
+
+    def _window_forward(self, ir, windows):
+        """Window logits WITH grad (callers wrap in no_grad for inference)."""
+        assert self._net is not None
+        x, edge_index = self._graph_tensors(ir)
+        cands = self._rules(ir)
+        extras = torch.tensor(
+            [_window_extras(ir, s, e, cands, self.config.rule_features) for s, e in windows],
+            dtype=torch.float32,
+        ).reshape(len(windows), WINDOW_EXTRA_DIM)
+        h = self._net.encode(x, edge_index)
+        return self._net.score_windows(h, windows, extras)
 
     def _train_step(
         self,
