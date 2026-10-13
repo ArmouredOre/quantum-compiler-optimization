@@ -396,7 +396,12 @@ def main(argv: list[str] | None = None) -> str:
     os.makedirs(args.out, exist_ok=True)
     sections = [f"# qco evaluation\n\nCalibration `{args.calibration}`, solver budget {args.budget}s/circuit, "
                 f"RL policy `{_shown(args.rl_policy)}`, GNN model `{_shown(args.gnn_model)}`. "
-                "CX-cost = multi-qubit gates in CX-equivalents (basis-independent; tools emit different gate sets)."]
+                "CX-cost = multi-qubit gates in CX-equivalents (basis-independent; tools emit different gate sets)."
+                + "".join(f"\n\n> **Provisional:** {note}" for note in (
+                    "Module A ran as the untrained greedy stand-in (no RL policy)." if args.rl_policy == "none" else "",
+                    "Module B ran as the rule-based stand-in (no trained GNN), so 'gnn' rows = rule-based."
+                    if args.gnn_model == "none" else "",
+                ) if note)]
     all_reports: dict[str, BenchmarkReport] = {}
 
     fronts: dict = {}
