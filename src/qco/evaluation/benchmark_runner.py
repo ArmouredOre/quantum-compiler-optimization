@@ -271,67 +271,75 @@ _INK, _MUTED, _GRID, _SURFACE = "#1f1f1e", "#6b6a63", "#e6e5df", "#fcfcfb"
 
 def write_pareto(fronts: dict, reports: dict[str, BenchmarkReport], out_dir: str,
                  calibration: "str | Calibration" = "default") -> str:
-    """Per circuit: ``<out_dir>/<circuit>.csv`` (qco front + input + baselines) and,
-    with matplotlib, ``<circuit>.png`` (gates vs depth | gates vs est. fidelity).
+    """Per circuit: ``<out_dir>/<circuit>.csv`` (qco front, input, baselines) and,
+    with matplotlib, ``<circuit>.png`` drawn from that CSV (``plot_pareto_csv``).
     Returns a markdown table of front sizes."""
     os.makedirs(out_dir, exist_ok=True)
+    cal = get_calibration(calibration)
+    lines = ["| circuit | front size | gates (min) | depth (min) | est. fidelity (max) |", "|---|---|---|---|---|"]
+    for name, front in sorted(fronts.items()):
+        q = [(p.circuit.gate_count(), p.circuit.depth(), cx_cost(p.circuit), estimated_fidelity(p.circuit, cal).value)
+             for p in front]
+        rows = [("qco", *x) for x in q]
+        for tool, r in reports.items():
+            for row in r.rows:
+                if row.circuit[: -len(".qasm")] != name:
+                    continue
+                if not any(x[0] == "input" for x in rows):
+                    rows.insert(0, ("input", row.gate_count_before, row.depth_before, row.cx_cost_before, ""))
+                if tool in _SERIES_STYLE and tool != "qco":
+                    rows.append((tool, row.gate_count_after, row.depth_after, row.cx_cost_after, row.fidelity_after))
+        path = os.path.join(out_dir, f"{name}.csv")
+        with open(path, "w", encoding="utf-8", newline="") as fh:
+            w = csv.writer(fh)
+            w.writerow(["source", "gate_count", "depth", "cx_cost", "est_fidelity"])
+            w.writerows(rows)
+        plot_pareto_csv(path)
+        lines.append(f"| {name} | {len(q)} | {min(x[0] for x in q)} | {min(x[1] for x in q)} | "
+                     f"{max(x[3] for x in q):.4f} |")
+    return "\n".join(lines)
+
+
+def plot_pareto_csv(path: str) -> str | None:
+    """Render ``<circuit>.csv`` from ``write_pareto`` to ``<circuit>.png``; None without matplotlib."""
     try:
         import matplotlib
 
         matplotlib.use("Agg")
         import matplotlib.pyplot as plt
-    except ImportError:  # CSV-only without the viz extra
-        plt = None
-    cal = get_calibration(calibration)
-    lines = ["| circuit | front size | gates (min) | depth (min) | est. fidelity (max) |", "|---|---|---|---|---|"]
-    for name, front in sorted(fronts.items()):
-        pts = {"qco": [(p.circuit.gate_count(), p.circuit.depth(), cx_cost(p.circuit),
-                        estimated_fidelity(p.circuit, cal).value) for p in front]}
-        inp = None
-        for tool, r in reports.items():
-            for row in r.rows:
-                if row.circuit[: -len(".qasm")] == name:
-                    inp = (row.gate_count_before, row.depth_before, row.cx_cost_before, None)
-                    if tool in _SERIES_STYLE and tool != "qco":
-                        pts[tool] = [(row.gate_count_after, row.depth_after, row.cx_cost_after, row.fidelity_after)]
-        with open(os.path.join(out_dir, f"{name}.csv"), "w", encoding="utf-8", newline="") as fh:
-            w = csv.writer(fh)
-            w.writerow(["source", "gate_count", "depth", "cx_cost", "est_fidelity"])
-            if inp:
-                w.writerow(["input", *inp[:3], ""])
-            for tool, rows in pts.items():
-                w.writerows([tool, *row] for row in rows)
-        q = pts["qco"]
-        lines.append(f"| {name} | {len(q)} | {min(x[0] for x in q)} | {min(x[1] for x in q)} | "
-                     f"{max(x[3] for x in q):.4f} |")
-        if plt is None:
-            continue
-        fig, axes = plt.subplots(1, 2, figsize=(9, 3.6), facecolor=_SURFACE)
-        for ax, (yi, ylabel) in zip(axes, [(1, "depth"), (3, "estimated fidelity")]):
-            ax.set_facecolor(_SURFACE)
-            for tool, rows in pts.items():
-                color, marker = _SERIES_STYLE[tool]
-                rows = sorted(rows)
-                xs, ys = [r[0] for r in rows], [r[yi] for r in rows]
-                if tool == "qco" and len(rows) > 1:
-                    ax.plot(xs, ys, color=color, linewidth=2, zorder=2)
-                ax.scatter(xs, ys, color=color, marker=marker, s=64, edgecolors=_SURFACE,
-                           linewidths=2, zorder=3, label="qco Pareto front" if tool == "qco" else tool)
-            if inp and yi == 1:
-                ax.scatter([inp[0]], [inp[1]], color=_MUTED, marker="x", s=64, zorder=3, label="input")
-            ax.set_xlabel("gate count", color=_MUTED)
-            ax.set_ylabel(ylabel, color=_MUTED)
-            ax.tick_params(colors=_MUTED, length=0)
-            ax.grid(color=_GRID, linewidth=1)
-            for side in ax.spines.values():
-                side.set_visible(False)
-        axes[0].legend(frameon=False, fontsize=8, labelcolor=_INK)
-        fig.suptitle(f"{name}: qco Pareto front vs baselines (lower-left / lower-right is better)",
-                     color=_INK, fontsize=10)
-        fig.tight_layout()
-        fig.savefig(os.path.join(out_dir, f"{name}.png"), dpi=150, facecolor=_SURFACE)
-        plt.close(fig)
-    return "\n".join(lines)
+    except ImportError:
+        return None
+    with open(path, encoding="utf-8") as fh:
+        rows = list(csv.DictReader(fh))
+    name = os.path.basename(path)[: -len(".csv")]
+    fig, axes = plt.subplots(1, 2, figsize=(9, 3.9), facecolor=_SURFACE)
+    panels = [("depth", "depth  (lower-left is better)"), ("est_fidelity", "estimated fidelity  (upper-left is better)")]
+    for ax, (col, title) in zip(axes, panels):
+        ax.set_facecolor(_SURFACE)
+        for tool, (color, marker) in [*_SERIES_STYLE.items(), ("input", (_MUTED, "x"))]:
+            pts = sorted((int(r["gate_count"]), float(r[col])) for r in rows if r["source"] == tool and r[col] != "")
+            if not pts:
+                continue
+            xs, ys = zip(*pts)
+            if tool == "qco" and len(pts) > 1:
+                ax.plot(xs, ys, color=color, linewidth=2, zorder=2)
+            ax.scatter(xs, ys, color=color, marker=marker, s=64, zorder=3,
+                       edgecolors=_SURFACE if marker != "x" else None, linewidths=2,
+                       label="qco Pareto front" if tool == "qco" else tool)
+        ax.set_title(title, color=_INK, fontsize=9, loc="left")
+        ax.set_xlabel("gate count", color=_MUTED)
+        ax.tick_params(colors=_MUTED, length=0)
+        ax.grid(color=_GRID, linewidth=1)
+        for side in ax.spines.values():
+            side.set_visible(False)
+    handles, labels = axes[0].get_legend_handles_labels()
+    fig.legend(handles, labels, loc="lower center", ncol=len(labels), frameon=False, fontsize=8, labelcolor=_INK)
+    fig.suptitle(f"{name}: qco Pareto front vs baselines", color=_INK, fontsize=10)
+    fig.tight_layout(rect=(0, 0.08, 1, 1))
+    out = path[: -len(".csv")] + ".png"
+    fig.savefig(out, dpi=150, facecolor=_SURFACE)
+    plt.close(fig)
+    return out
 
 
 ABLATIONS = {
