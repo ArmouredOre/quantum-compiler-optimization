@@ -3,6 +3,8 @@
 import math
 import random
 
+import pytest
+
 from qco.ir import IntermediateRepresentation
 from qco.modules.rl_scheduler import RLScheduler
 from qco.modules.gnn_cancellation.model import GNNCancellationPredictor
@@ -52,9 +54,9 @@ def test_rl_scheduler_preserves_gate_count():
 
 
 def test_nsga2_genetic_search_finds_non_dominated_front():
-    # Sprint 2: real pymoo NSGA-II with crossover/mutation over gate sequences,
-    # so the exact front is no longer deterministic (search can beat the seed) -
-    # check the search properties instead of an exact circuit.
+    # Real pymoo NSGA-II over block-variant genomes (N3), so the exact front
+    # isn't deterministic (search can beat the seed) - check the search
+    # properties instead of an exact circuit.
     seed = IntermediateRepresentation(2)
     seed.add("h", [0]).add("h", [0]).add("cx", [0, 1])
     cfg = NSGA2Config(pop_size=12, generations=6)
@@ -76,10 +78,7 @@ def test_nsga2_genetic_search_finds_non_dominated_front():
 def test_mutation_operators_never_emit_an_invalid_circuit():
     # commute / drop-candidate / reorder are equivalence-preserving by
     # construction (Module B's gates_commute / rule_based_candidates, issues
-    # #6 and #11, closed). Crossover is excluded from this claim - splicing
-    # two different circuits together fundamentally isn't equivalence-
-    # preserving, which is why the pipeline still re-verifies NSGA-II's front
-    # before returning it (see test_pipeline_end_to_end_qft_like below).
+    # #6 and #11, closed). Block-level crossover is covered below.
     checker = EquivalenceChecker()
     rng = random.Random(7)
 
@@ -95,6 +94,39 @@ def test_mutation_operators_never_emit_an_invalid_circuit():
         for _ in range(25):
             current = mutate_validity_preserving(current, rng)
             assert checker.check(base, current).equivalent
+
+
+def test_nsga2_front_is_equivalent_without_filtering():
+    # N3 (#30): crossover only recombines per-block variant indices, so every
+    # front member is equivalent by construction - no post-hoc filter.
+    pytest.importorskip("pymoo")
+    checker = EquivalenceChecker(backend="numeric")
+    ir = IntermediateRepresentation(4, name="mix4")
+    for _ in range(3):
+        ir.add("h", [0]).add("h", [0]).add("cx", [0, 1]).add("t", [2]).add("cx", [1, 2])
+        ir.add("rz", [3], [0.3]).add("cx", [2, 3]).add("cx", [2, 3]).add("x", [1])
+    cfg = NSGA2Config(pop_size=16, generations=10)
+    front = NSGA2Compiler(config=cfg).evolve([ir])
+    assert front
+    assert all(checker.check(ir, p.circuit).equivalent for p in front)
+    assert min(p.objective.gate_count for p in front) < ir.gate_count()
+
+
+def test_nsga2_block_variants_argument():
+    # Caller-supplied verified variants: block 0 has a cheaper equivalent
+    # variant, block 1 only itself. The search must find the cheap combination
+    # and never produce anything non-equivalent.
+    pytest.importorskip("pymoo")
+    checker = EquivalenceChecker(backend="numeric")
+    b0 = IntermediateRepresentation(2).add("h", [0]).add("h", [0]).add("cx", [0, 1])
+    b0_cheap = IntermediateRepresentation(2).add("cx", [0, 1])
+    b1 = IntermediateRepresentation(2).add("t", [1]).add("cx", [1, 0])
+    full = IntermediateRepresentation(2, gates=b0.gates + b1.gates)
+    front = NSGA2Compiler(config=NSGA2Config(pop_size=8, generations=5)).evolve(
+        [], block_variants=[[b0, b0_cheap], [b1]]
+    )
+    assert all(checker.check(full, p.circuit).equivalent for p in front)
+    assert min(p.objective.gate_count for p in front) == 3
 
 
 def test_nsga2_falls_back_without_pymoo(monkeypatch):
@@ -151,3 +183,74 @@ def test_pipeline_on_generated_benchmark(tmp_path):
     p.write_text(c.text())
     res = optimize(str(p))
     assert res.pareto_front
+
+
+# --- #31: novelty wiring in HybridOptimizer -------------------------------------
+
+from qco.ir import parse
+from qco.pipeline import HybridOptimizer, PipelineConfig, _compact
+
+
+def test_pipeline_reports_block_count_not_front_size():
+    ir = parse("benchmarks/circuits/qaoa_n16_p1.qasm")
+    res = optimize(ir, PipelineConfig(solver_budget_s=1.0))
+    from qco.graphs import partition_circuit
+
+    assert res.blocks == len(partition_circuit(ir))
+
+
+def test_pipeline_verifies_blocks_of_wide_circuits():
+    # N2: 16 qubits is past the dense ceiling, but each block is checked on its
+    # own <= 8 active qubits, so nothing is left unverified.
+    ir = parse("benchmarks/circuits/qft_n16.qasm")
+    res = optimize(ir, PipelineConfig(solver_budget_s=1.0))
+    assert res.verified
+    assert res.unverified_blocks == 0
+    assert all(p.circuit.num_qubits == 16 for p in res.pareto_front)
+    assert min(p.objective.gate_count for p in res.pareto_front) <= ir.gate_count()
+
+
+def test_compact_relabels_onto_active_qubits():
+    a = IntermediateRepresentation(20).add("cx", [3, 17]).add("h", [9])
+    b = IntermediateRepresentation(20).add("h", [9]).add("cx", [3, 17])
+    ca, cb = _compact(a, b)
+    assert ca.num_qubits == cb.num_qubits == 3
+    assert [g.qubits for g in ca] == [(0, 2), (1,)]
+    assert EquivalenceChecker().check(ca, cb).equivalent
+
+
+def test_unverifiable_rewrite_is_rejected_not_accepted():
+    # > 8 active qubits, non-phase-poly gates: the checker can only say
+    # "unverified", and the pipeline must keep the original.
+    opt = HybridOptimizer()
+    orig = IntermediateRepresentation(10)
+    for q in range(10):
+        orig.add("h", [q])
+    for q in range(9):
+        orig.add("cx", [q, q + 1])
+    proposed = IntermediateRepresentation(10, list(orig.gates[:-1]))
+    kept, accepted, result = opt.revert_rewrite(orig, proposed, block_idx=3)
+    assert not accepted and result.method == "unverified"
+    assert kept is orig
+    assert opt._unverified == {3}
+
+
+def test_feedback_loop_stops_when_reward_stops_improving():
+    ir = _hh_circuit()
+    res = optimize(ir, PipelineConfig(feedback_iterations=5, calibration="default"))
+    assert 1 <= len(res.reward_history) < 5      # second pass has nothing left to gain
+    assert res.reward_history[-1] <= 0 or len(res.reward_history) == 1
+    assert res.reward == res.reward_history[-1]
+
+
+def test_resynthesized_windows_are_stitched_back_in():
+    # N1: H-CX-H == CZ on each pair; re-synthesis shrinks both windows.
+    c = IntermediateRepresentation(4, name="two_windows")
+    c.add("h", [1]).add("cx", [0, 1]).add("h", [1])
+    c.add("h", [3]).add("cx", [2, 3]).add("h", [3])
+    opt = HybridOptimizer(PipelineConfig(solver_budget_s=10.0))
+    res = opt.run(c)
+    best = min(res.pareto_front, key=lambda p: p.objective.gate_count).circuit
+    assert best.gate_count() < c.gate_count()
+    assert res.solver_time_s > 0
+    assert EquivalenceChecker().check(c, best).equivalent
