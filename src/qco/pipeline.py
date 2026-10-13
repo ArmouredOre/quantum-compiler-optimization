@@ -27,7 +27,7 @@ from typing import Any
 
 from qco.evaluation.metrics import scalarized_reward
 from qco.graphs.partitioning import Block, partition_circuit
-from qco.ir.intermediate_representation import IntermediateRepresentation
+from qco.ir.intermediate_representation import Gate, IntermediateRepresentation
 from qco.ir.parser import parse
 from qco.modules.evolutionary.nsga2 import NSGA2Compiler, ParetoPoint
 from qco.modules.gnn_cancellation.features import rule_based_candidates
@@ -79,6 +79,37 @@ class PipelineResult:
     unverified_blocks: int = 0       # blocks where a rewrite was rejected as unverifiable
     solver_time_s: float = 0.0       # exact re-synthesis time actually spent (N1)
     reward_history: list[float] = field(default_factory=list)
+
+
+def apply_cancellations(ir: IntermediateRepresentation, candidates) -> tuple[IntermediateRepresentation, list]:
+    """Apply a non-overlapping subset of Module B candidates (in the given order).
+
+    ``inverse_pair`` / ``identity_chain`` drop their gates; ``rotation_merge``
+    replaces its run with one rotation at the first index whose angles are the
+    exact sum (no wrapping - crz(t + 2*pi) != crz(t)). Rotation runs are
+    wire-adjacent (nothing else on that support in between), so this is exact.
+    """
+    used: set[int] = set()
+    drop: set[int] = set()
+    merged: dict[int, Gate] = {}
+    applied = []
+    for c in candidates:
+        idx = c.gate_indices
+        if used & set(idx):
+            continue
+        if c.kind in ("inverse_pair", "identity_chain"):
+            drop.update(idx)
+        elif c.kind == "rotation_merge":
+            first = ir.gates[idx[0]]
+            params = tuple(sum(ir.gates[k].params[i] for k in idx) for i in range(len(first.params)))
+            merged[idx[0]] = Gate(first.name, first.qubits, params, first.tag)
+            drop.update(idx[1:])
+        else:
+            continue
+        used.update(idx)
+        applied.append(c)
+    gates = [merged.get(i, g) for i, g in enumerate(ir.gates) if i not in drop]
+    return IntermediateRepresentation(ir.num_qubits, gates, ir.name), applied
 
 
 def _compact(
@@ -181,17 +212,9 @@ class HybridOptimizer:
             variants.append(scheduled)
         base = variants[-1]
 
-        # Module B: drop non-overlapping inverse pairs, gated by confidence (N5).
-        drop: set[int] = set()
-        applied = []
-        for c in (self.gnn.predict(base) if self.config.use_gnn else []):
-            if c.kind == "inverse_pair" and c.a not in drop and c.b not in drop:
-                drop.update({c.a, c.b})
-                applied.append(c)
-        if drop:
-            candidate = IntermediateRepresentation(
-                base.num_qubits, [g for i, g in enumerate(base.gates) if i not in drop], base.name
-            )
+        # Module B: apply non-overlapping cancellations / rotation merges, gated by confidence (N5).
+        candidate, applied = apply_cancellations(base, self.gnn.predict(base) if self.config.use_gnn else [])
+        if applied:
             proven = {(c.kind, c.gate_indices) for c in rule_based_candidates(base)}
             if not verify or all((c.kind, c.gate_indices) in proven for c in applied):
                 variants.append(candidate)
