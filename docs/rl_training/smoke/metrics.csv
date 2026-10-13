@@ -1,0 +1,4 @@
+iteration,timesteps,episodes,mean_return,mean_ep_len,train_depth_red_pct,train_gate_red_pct,eval_depth_red_pct,eval_gate_red_pct,policy_loss,value_loss,entropy,approx_kl,clip_frac,seconds
+1,204,18,-1.45326,11.3333,-16.0935,0,2.5,7.34783,-0.00199095,1.02923,2.21285,0.000614941,0,0.225144
+2,414,23,-1.18192,9.13043,-12.8709,0,2.5,7.34783,-0.00215292,0.670149,2.31418,0.000490853,0,0.237003
+3,617,19,-1.49081,10.6842,-17.4394,0,2.5,7.34783,-0.00367071,0.765289,2.33307,0.00221556,0,0.220056

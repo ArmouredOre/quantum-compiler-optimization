@@ -1,9 +1,10 @@
-"""Dump / load provisional cancellation labels for Module B training."""
+"""Dump / load cancellation labels (rule-based or verified) for Module B training."""
 
 from __future__ import annotations
 
 import json
 import random
+import warnings
 from pathlib import Path
 from typing import Any, Sequence
 
@@ -17,29 +18,88 @@ from qco.modules.gnn_cancellation.features import (
 
 LabelledCircuit = tuple[IntermediateRepresentation, list[CancellationCandidate]]
 
+LABEL_SOURCES = ("rule", "verified")
+
+
+def verify_labels(
+    ir: IntermediateRepresentation,
+    candidates: Sequence[CancellationCandidate],
+    *,
+    checker: Any | None = None,
+    backend: str = "auto",
+) -> list[bool | None]:
+    """Verified status per candidate: True / False, or None if unknown.
+
+    ``None`` means the checker crashed on that candidate (it reports
+    ``method == "error"``). That is not the same as "not equivalent", so
+    callers must never train on it.
+    """
+    if not candidates:
+        return []
+    # Lazy import: keeps Module B importable without the verifier loaded.
+    from qco.modules.smt_verifier.equivalence import verify_candidates_detailed
+
+    try:
+        results = verify_candidates_detailed(
+            ir, list(candidates), checker=checker, backend=backend
+        )
+    except Exception as exc:
+        warnings.warn(
+            f"verification failed on {ir.name!r}: {exc!r}; labels unknown",
+            stacklevel=2,
+        )
+        return [None] * len(candidates)
+    if len(results) != len(candidates):
+        warnings.warn(
+            f"verifier returned {len(results)} results for {len(candidates)} "
+            f"candidates on {ir.name!r}; labels unknown",
+            stacklevel=2,
+        )
+        return [None] * len(candidates)
+    return [None if res.method == "error" else bool(res.equivalent) for _, res in results]
 
 def candidates_to_records(
     ir: IntermediateRepresentation,
     candidates: list[CancellationCandidate] | None = None,
+    *,
+    label_source: str = "rule",
+    checker: Any | None = None,
+    backend: str = "auto",
 ) -> dict[str, Any]:
-    """Serialize a circuit and its provisional (rule-based) labels."""
+    """Serialize a circuit and its labels (``label_source`` is "rule" or "verified")."""
+    if label_source not in LABEL_SOURCES:
+        raise ValueError(f"label_source must be one of {LABEL_SOURCES}, got {label_source!r}")
     cands = rule_based_candidates(ir) if candidates is None else candidates
-    return {
-        "name": ir.name,
-        "num_qubits": ir.num_qubits,
-        "gate_count": ir.gate_count(),
-        "qasm": ir.to_qasm2(),
-        "candidates": [
+    if label_source == "verified":
+        status = verify_labels(ir, cands, checker=checker, backend=backend)
+    else:
+        status = [None] * len(cands)  # not checked
+
+    rows = []
+    for c, ok in zip(cands, status):
+        if label_source == "rule":
+            label: int | None = 1
+        else:
+            label = None if ok is None else int(ok)
+        rows.append(
             {
                 "a": c.a,
                 "b": c.b,
                 "kind": c.kind,
                 "score": c.score,
                 "indices": list(c.gate_indices),
-                "provisional_label": 1,
+                "provisional_label": 1,  # kept for backward compatibility
+                "verified": ok,
+                "label": label,
             }
-            for c in cands
-        ],
+        )
+    return {
+        "name": ir.name,
+        "num_qubits": ir.num_qubits,
+        "gate_count": ir.gate_count(),
+        "qasm": ir.to_qasm2(),
+        "label_source": label_source,
+        "candidates": rows,
     }
 
 
@@ -47,10 +107,16 @@ def dump_candidates(
     ir: IntermediateRepresentation,
     path: str | Path,
     candidates: list[CancellationCandidate] | None = None,
+    *,
+    label_source: str = "rule",
+    checker: Any | None = None,
+    backend: str = "auto",
 ) -> list[CancellationCandidate]:
     """Write ``circuit -> list[CancellationCandidate]`` JSON to ``path``."""
     cands = rule_based_candidates(ir) if candidates is None else candidates
-    payload = candidates_to_records(ir, cands)
+    payload = candidates_to_records(
+        ir, cands, label_source=label_source, checker=checker, backend=backend
+    )
     dest = Path(path)
     dest.parent.mkdir(parents=True, exist_ok=True)
     dest.write_text(json.dumps(payload, indent=2), encoding="utf-8")
@@ -58,7 +124,7 @@ def dump_candidates(
 
 
 def load_candidates(path: str | Path) -> tuple[IntermediateRepresentation, list[CancellationCandidate]]:
-    """Inverse of :func:`dump_candidates`."""
+    """Inverse of :func:`dump_candidates`; returns positives only."""
     payload = json.loads(Path(path).read_text(encoding="utf-8"))
     ir = from_qasm2(payload["qasm"])
     ir.name = payload.get("name", ir.name)
@@ -71,21 +137,35 @@ def load_candidates(path: str | Path) -> tuple[IntermediateRepresentation, list[
             indices=tuple(row.get("indices") or ()),
         )
         for row in payload.get("candidates", [])
+        if row.get("label", 1) == 1  # 0 = rejected, None = unknown, missing = old file
     ]
     return ir, cands
 
 
-def dump_suite(circuits_dir: str | Path, out_dir: str | Path) -> list[Path]:
+def dump_suite(
+    circuits_dir: str | Path,
+    out_dir: str | Path,
+    *,
+    label_source: str = "rule",
+    backend: str = "auto",
+) -> list[Path]:
     """Dump a JSON label file for every ``.qasm`` in ``circuits_dir``."""
     src = Path(circuits_dir)
     dest = Path(out_dir)
     dest.mkdir(parents=True, exist_ok=True)
+
+    checker = None
+    if label_source == "verified":
+        from qco.modules.smt_verifier.equivalence import EquivalenceChecker
+
+        checker = EquivalenceChecker(backend=backend)  # one checker, reused
+
     written: list[Path] = []
     for qasm_path in sorted(src.glob("*.qasm")):
         ir = from_qasm2(qasm_path.read_text(encoding="utf-8"))
         ir.name = qasm_path.stem
         out_path = dest / f"{qasm_path.stem}.json"
-        dump_candidates(ir, out_path)
+        dump_candidates(ir, out_path, label_source=label_source, checker=checker, backend=backend)
         written.append(out_path)
     return written
 

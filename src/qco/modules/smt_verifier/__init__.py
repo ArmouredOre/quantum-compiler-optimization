@@ -13,6 +13,8 @@ from qco.modules.smt_verifier.bounded_optimizer import (
     BoundedResynthesizer,
     ResynthConfig,
     ResynthOutcome,
+    ResynthResult,
+    canonical_window_form,
     resynthesize_window,
 )
 from qco.modules.smt_verifier.phase_poly import (
@@ -28,6 +30,8 @@ __all__ = [
     "BoundedResynthesizer",
     "ResynthConfig",
     "ResynthOutcome",
+    "ResynthResult",
+    "canonical_window_form",
     "resynthesize_window",
     "PhasePolynomial",
     "check_phase_poly",

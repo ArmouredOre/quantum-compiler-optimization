@@ -39,7 +39,9 @@ from dataclasses import dataclass
 from qco.evaluation.metrics import estimated_fidelity, scalarized_reward
 from qco.graphs.dag import GateDAG, build_dag
 from qco.ir.intermediate_representation import ARITY, PARAMETRIC, IntermediateRepresentation
-from qco.modules.rl_scheduler.rewrites import IllegalActionError, apply_action
+from qco.modules.rl_scheduler.commutation import commutes, validate_mode
+from qco.modules.rl_scheduler.cr_pass import reduce_with_stats
+from qco.modules.rl_scheduler.rewrites import IllegalActionError, apply_action, flippable_edges
 
 
 class ActionKind(enum.IntEnum):
@@ -80,7 +82,27 @@ class MaxStepsExceeded(RuntimeError):
 
 
 class SchedulerEnv:
-    """Gymnasium-style environment. ``reset`` / ``step`` land in Phase 3."""
+    """Gymnasium-style environment over the gate list.
+
+    Sprint 2 adds three **opt-in** keyword arguments (all default to the Sprint 1
+    behaviour, so existing callers and tests are unaffected):
+
+    ``commutation``
+        ``"disjoint"`` (default) lets ``COMMUTE`` swap only adjacent gates on
+        disjoint qubits, which never changes the dependency DAG. ``"full"`` also
+        allows adjacent gates that share qubits but provably commute (see
+        :mod:`qco.modules.rl_scheduler.commutation`) — those swaps change the
+        DAG, so they are what can actually reduce depth.
+    ``reduction``
+        Run the deterministic Commutation-and-Reduction pass
+        (:mod:`qco.modules.rl_scheduler.cr_pass`) on the starting circuit and
+        after every action, so the agent only ever sees circuits with no
+        trivial cancellations left. The terminal bonus is then measured against
+        the *CR-reduced* start, i.e. the agent is credited only for what it adds
+        on top of CR.
+    ``stop_on_noop``
+        Treat a ``NOOP`` action as "I'm done" and terminate the episode.
+    """
 
     metadata = {"render_modes": []}
 
@@ -91,16 +113,36 @@ class SchedulerEnv:
         *,
         max_episode_steps: int = 200,
         calibration: str = "default",
+        commutation: str = "disjoint",
+        reduction: bool = False,
+        cr_window: int | None = None,
+        stop_on_noop: bool = False,
     ):
         self.initial = circuit.copy()
-        self.circuit = circuit.copy()
-        self.dag: GateDAG = build_dag(self.circuit)
         self.weights = weights or RewardWeights()
         self.max_episode_steps = max_episode_steps
         self.calibration = calibration
+        self.commutation = validate_mode(commutation)
+        self.reduction = reduction
+        self.cr_window = cr_window
+        self.stop_on_noop = stop_on_noop
+        self._start_episode()
+
+    def _start_episode(self) -> None:
+        """(Re)initialize all per-episode state from ``self.initial``."""
+        start = self.initial.copy()
+        self.cr_initial_removed = 0
+        if self.reduction:
+            start, stats = reduce_with_stats(start, window=self.cr_window)
+            self.cr_initial_removed = stats.gates_removed
+        self.circuit = start
+        # Baseline the terminal bonus is measured against: the original circuit,
+        # or (with ``reduction``) the CR-reduced start.
+        self.reference = start.copy()
+        self.dag: GateDAG = build_dag(self.circuit)
         self._steps = 0
         self._done = False
-        # Deltas are computed against theprevious step's circuit, not the
+        # Deltas are computed against the previous step's circuit, not the
         # episode's initial one, so reward reflects the marginal effect of the
         # action just taken rather than re-scoring the whole episode each step.
         self._prev_gate_count = self.circuit.gate_count()
@@ -120,14 +162,11 @@ class SchedulerEnv:
         relies on, rather than dropping the keyword and breaking that contract
         (see docs/gaps_and_notes_module_a.md).
         """
-        self.circuit = self.initial.copy()
-        self.dag = build_dag(self.circuit)
-        self._steps = 0
-        self._done = False
-        self._prev_gate_count = self.circuit.gate_count()
-        self._prev_depth = self.circuit.depth()
-        self._prev_fidelity = estimated_fidelity(self.circuit, self.calibration).value
-        info: dict = {"legal_actions": self.legal_actions()}
+        self._start_episode()
+        info: dict = {
+            "legal_actions": self.legal_actions(),
+            "cr_removed": self.cr_initial_removed,
+        }
         return self.observation(), info
 
     def step(self, action: Action):
@@ -154,9 +193,14 @@ class SchedulerEnv:
 
         before = self.circuit
         try:
-            after = apply_action(before, action.kind.name, action.i, action.j)
+            after = apply_action(before, action.kind.name, action.i, action.j, self.commutation)
         except IllegalActionError:
             after = before.copy()
+
+        cr_removed = 0
+        if self.reduction:
+            after, cr_stats = reduce_with_stats(after, window=self.cr_window)
+            cr_removed = cr_stats.gates_removed
 
         self.circuit = after
         self.dag = build_dag(self.circuit)
@@ -180,12 +224,12 @@ class SchedulerEnv:
         self._prev_depth = new_depth
         self._prev_fidelity = new_fidelity
 
-        terminated = self._is_fixed_point()
+        terminated = (self.stop_on_noop and action.kind == ActionKind.NOOP) or self._is_fixed_point()
         truncated = self._steps >= self.max_episode_steps
         if terminated or truncated:
             self._done = True
             reward += self.weights.terminal * scalarized_reward(
-                self.initial, self.circuit, calibration=self.calibration
+                self.reference, self.circuit, calibration=self.calibration
             )
 
         info = {
@@ -193,6 +237,7 @@ class SchedulerEnv:
             "d_gate_count": d_gate_count,
             "d_depth": d_depth,
             "d_fidelity": d_fidelity,
+            "cr_removed": cr_removed,
         }
         return self.observation(), reward, terminated, truncated, info
 
@@ -202,13 +247,30 @@ class SchedulerEnv:
 
     # -- helpers already usable ------------------------------------------------
     def legal_actions(self) -> list[Action]:
-        """Commuting pairs = adjacent gates on disjoint qubits (safe reorderings)."""
+        """Legal reorderings plus adjacent mergeable rotations (and ``NOOP``).
+
+        ``commutation="disjoint"`` (default, Sprint 1): adjacent gates on disjoint
+        qubits — swapping them never changes the dependency DAG.
+
+        ``commutation="full"``: every *flippable dependency edge* — two gates
+        consecutive on a shared qubit that provably commute and can be reordered
+        by hoisting/sinking past commuting gates. Each offered ``COMMUTE(i, j)``
+        therefore changes the DAG (and so possibly the depth). Swapping two
+        *identical* gates is a no-op and is never offered.
+        """
         acts: list[Action] = [Action(ActionKind.NOOP, -1)]
         gates = self.circuit.gates
+        if self.commutation == "full":
+            # DAG-edge flips: every offered COMMUTE changes the dependency DAG.
+            for i, j in flippable_edges(gates, "full"):
+                acts.append(Action(ActionKind.COMMUTE, i, j))
+        else:
+            for i in range(len(gates) - 1):
+                a, b = gates[i], gates[i + 1]
+                if a != b and commutes(a, b, "disjoint"):
+                    acts.append(Action(ActionKind.COMMUTE, i, i + 1))
         for i in range(len(gates) - 1):
             a, b = gates[i], gates[i + 1]
-            if set(a.qubits).isdisjoint(b.qubits):
-                acts.append(Action(ActionKind.COMMUTE, i, i + 1))
             if a.name == b.name and a.qubits == b.qubits and a.name in {"rx", "ry", "rz", "p"}:
                 acts.append(Action(ActionKind.MERGE_ROTATION, i, i + 1))
         return acts

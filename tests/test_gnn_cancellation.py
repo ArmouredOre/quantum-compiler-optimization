@@ -12,8 +12,11 @@ from qco.ir.parser import from_qasm2
 from qco.modules.gnn_cancellation.dataset import dump_candidates, dump_suite, load_candidates
 from qco.modules.gnn_cancellation.eval import (
     adjacent_inverse_baseline,
+    build_pr_table,
+    calibrate_threshold,
     compare_candidates,
     held_out_split,
+    train_val_test_split,
 )
 from qco.modules.gnn_cancellation.features import (
     EDGE_FEATURE_DIM,
@@ -25,6 +28,7 @@ from qco.modules.gnn_cancellation.features import (
     IDX_PARAMETRIC,
     IDX_QUBITS,
     MAX_ARITY,
+    CancellationCandidate,
     are_inverses,
     build_pyg_data,
     gate_node_features,
@@ -280,3 +284,104 @@ def test_held_out_split_is_disjoint_and_covers():
     assert train and test
     assert set(train).isdisjoint(test)
     assert set(train) | set(test) == set(items)
+
+
+# -- Sprint 3 (#25): verified labels, calibration, P/R table -----------------
+
+def _hh_cx_ir():
+    ir = IntermediateRepresentation(2, name="hh_cx")
+    ir.add("h", [0]).add("h", [0]).add("cx", [0, 1]).add("cx", [0, 1])
+    return ir
+
+
+def test_verified_labels_all_pass_checker(tmp_path: Path):
+    from qco.modules.smt_verifier.equivalence import verify_candidates
+
+    ir = _hh_cx_ir()
+    out = tmp_path / "c.json"
+    dump_candidates(ir, out, label_source="verified")
+    ir2, positives = load_candidates(out)
+    assert positives, "expected at least one verified positive"
+    assert all(ok for _, ok in verify_candidates(ir2, positives))
+
+
+def test_rule_mode_still_labels_everything_positive(tmp_path: Path):
+    ir = _hh_cx_ir()
+    out = tmp_path / "r.json"
+    dumped = dump_candidates(ir, out)  # default label_source="rule"
+    _, positives = load_candidates(out)
+    assert len(positives) == len(dumped)
+
+
+def test_load_candidates_filters_by_label(tmp_path: Path):
+    import json
+
+    ir = _hh_cx_ir()
+    out = tmp_path / "mixed.json"
+    dump_candidates(ir, out)
+    payload = json.loads(out.read_text(encoding="utf-8"))
+    base = payload["candidates"][0]
+    old_row = {k: v for k, v in {**base, "a": 1, "b": 2}.items() if k != "label"}
+    payload["candidates"] = [
+        {**base, "a": 0, "b": 1, "label": 1},
+        {**base, "a": 2, "b": 3, "label": 0},
+        {**base, "a": 0, "b": 3, "label": None},
+        old_row,  # old file format: no label field
+    ]
+    out.write_text(json.dumps(payload), encoding="utf-8")
+    _, positives = load_candidates(out)
+    assert {(c.a, c.b) for c in positives} == {(0, 1), (1, 2)}
+
+
+class _RaisingChecker:
+    def check_unitaries(self, *args, **kwargs):
+        raise RuntimeError("boom")
+
+    def check(self, *args, **kwargs):
+        raise RuntimeError("boom")
+
+
+def test_verify_labels_marks_checker_errors_unknown():
+    from qco.modules.gnn_cancellation.dataset import verify_labels
+
+    ir = _hh_cx_ir()
+    good = CancellationCandidate(0, 1, "inverse_pair", 1.0)
+    assert verify_labels(ir, [good], checker=_RaisingChecker()) == [None]
+
+
+class _FakePredictor:
+    """Scores every gold pair 0.9 and one spurious pair 0.4."""
+
+    def __init__(self, gold_pairs):
+        self.gold_pairs = gold_pairs
+
+    def predict(self, ir, threshold=0.5):
+        cands = [CancellationCandidate(a, b, "inverse_pair", 0.9) for a, b in self.gold_pairs]
+        cands.append(CancellationCandidate(0, 3, "inverse_pair", 0.4))
+        return [c for c in cands if c.score >= threshold]
+
+
+def test_calibrate_threshold_rejects_low_confidence_noise():
+    ir = _hh_cx_ir()
+    gold = [
+        CancellationCandidate(0, 1, "inverse_pair", 1.0),
+        CancellationCandidate(2, 3, "inverse_pair", 1.0),
+    ]
+    pred = _FakePredictor([(0, 1), (2, 3)])
+    t, sweep = calibrate_threshold(pred, [(ir, gold)])
+    assert 0.4 < t <= 0.9
+    assert max(p.metrics.f1 for p in sweep) == 1.0
+
+
+def test_build_pr_table_has_row_per_system():
+    ir = _hh_cx_ir()
+    gold = [CancellationCandidate(0, 1, "inverse_pair", 1.0)]
+    table = build_pr_table([(ir, gold)], {"rule": lambda i: gold, "empty": lambda i: []})
+    assert "| rule | 1.000 | 1.000 | 1.000 |" in table
+    assert "| empty |" in table
+
+
+def test_train_val_test_split_disjoint():
+    train, val, test = train_val_test_split(list(range(20)), seed=1)
+    assert set(train).isdisjoint(val) and set(train).isdisjoint(test) and set(val).isdisjoint(test)
+    assert sorted(train + val + test) == list(range(20))

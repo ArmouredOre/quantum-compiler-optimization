@@ -20,6 +20,7 @@ from qco.ir.parser import parse
 from qco.modules.evolutionary.nsga2 import NSGA2Compiler, ParetoPoint
 from qco.modules.gnn_cancellation.model import GNNCancellationPredictor
 from qco.modules.rl_scheduler.agent import RLScheduler
+from qco.modules.smt_verifier.bounded_optimizer import BoundedResynthesizer, ResynthConfig
 from qco.modules.smt_verifier.equivalence import EquivalenceChecker, EquivalenceResult
 
 
@@ -39,7 +40,9 @@ class PipelineConfig:
     max_block_gates: int = 64
     partition_backend: str = "auto"
     verify_rewrites: bool = True
+    enable_resynthesis: bool = True
     feedback_iterations: int = 1     # closed-loop passes; >1 needs a trained RL agent
+    resynth_config: ResynthConfig | None = None
 
 
 @dataclass(slots=True)
@@ -58,6 +61,7 @@ class HybridOptimizer:
         self.rl = RLScheduler()
         self.gnn = GNNCancellationPredictor()
         self.checker = EquivalenceChecker()
+        self.resynthesizer = BoundedResynthesizer(self.config.resynth_config)
         self.ea = NSGA2Compiler()
         self.revert_events: list[RevertEvent] = []
 
@@ -128,6 +132,7 @@ class HybridOptimizer:
             )
 
         # Module C: verify every rewrite before accepting it.
+        current = original
         if self.config.verify_rewrites and original.num_qubits <= 8:
             accepted_block, accepted, result = self.revert_rewrite(
                 original=original,
@@ -136,8 +141,26 @@ class HybridOptimizer:
                 block_idx=block_idx,
                 stage="module_b_cancellation",
             )
-            return accepted_block
-        return candidate
+            current = accepted_block
+        else:
+            current = candidate
+
+        # Stage 4 / Module C: Bounded-window exact re-synthesis in the loop (Issue #33)
+        if self.config.enable_resynthesis and self.resynthesizer.applicable(current):
+            resynth_ir, status, solve_s = self.resynthesizer.resynthesize(current)
+            if resynth_ir.gate_count() < current.gate_count():
+                if self.config.verify_rewrites and original.num_qubits <= 8:
+                    current, accepted, result = self.revert_rewrite(
+                        original=original,
+                        proposed=resynth_ir,
+                        fallback=current,
+                        block_idx=block_idx,
+                        stage="bounded_resynthesis",
+                    )
+                else:
+                    current = resynth_ir
+
+        return current
 
     # -- full pipeline -----------------------------------------------------
     def run(self, source) -> PipelineResult:

@@ -204,3 +204,17 @@ function-scoped `skipif` instead, never a module-level skip unless the
 | `src/qco/modules/rl_scheduler/spaces.py` | **new** | Optional Gymnasium space + fixed-size SB3 action adapter |
 | `tests/test_rl_scheduler.py` | **new** | 46 tests: rewrite unit tests, env contract tests, spaces adapter tests, 10k-step smoke tests |
 | `docs/gaps_and_notes_module_a.md` | **new** | this file |
+---
+
+# Sprint 2 addendum (issue #10)
+
+Full write-up: [`sprint2_report_module_a.md`](sprint2_report_module_a.md). Gaps found while building it:
+
+1. **Sprint 1 bug fixed.** `commute` / `merge_rotation` accepted non-adjacent indices and could return a circuit that was *not* equivalent to the input. They now raise `IllegalActionError` unless `|i-j| == 1` (regression tests in `tests/test_rl_cr_pass.py`).
+2. **Disjoint-only COMMUTE cannot change depth.** Swapping adjacent disjoint gates never alters the dependency DAG, so the Sprint 1 action space was a no-op for the depth objective. The opt-in `commutation="full"` mode flips DAG edges between gates that provably commute (wire-type rule, checked against exact unitaries), which can.
+3. **Lookahead matters.** Without the one-step depth-delta feature (`lookahead=False`) the 60k-step agent reaches only 5.2 % depth reduction (CR-only: 4.7 %, greedy-depth: 12.4 %). With it the agent matches/slightly beats greedy (13.4 %). The learned part is currently a thin layer on top of a strong heuristic; showing real learned lookahead (multi-step plans) is a Sprint 3 research item.
+4. **Gate-count reduction comes from CR alone.** All baselines and the agent share the CR-reduced start (12.4 % gate reduction on the held-out set); the agent learns depth only, because COMMUTE never removes gates. Merge-after-commute opportunities are already caught by the CR pass.
+5. **CI has no numpy.** The built-in PPO is therefore pure Python (optional numpy speed-up, ~10x). The SB3 backend is behind the `rl` extra, now including `sb3-contrib`.
+6. **`RLScheduler.schedule()` untrained path unchanged** (pipeline tests pin it). Wiring the trained policy / CR pass into the pipeline default is Sprint 3 with the pipeline owner.
+7. **Equivalence is only asserted up to 8 qubits** (numeric backend); 10/20/40-qubit generalization needs the SMT path.
+8. **Proxy reward only.** Stage 6 is not wired; `calibration` is plumbed through for later.
