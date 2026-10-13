@@ -1,0 +1,11 @@
+# Streamlit Community Cloud installs this file (main file: app/streamlit_app.py).
+# The app imports qco from ../src directly, so the package itself is not installed.
+streamlit>=1.50
+pyyaml>=6.0
+numpy>=1.26
+pymoo>=0.6
+pymetis>=2023.1
+qiskit>=1.0
+z3-solver>=4.13
+# torch / torch-geometric are left out (too heavy for the free tier):
+# Module B then uses its rule-based candidate generator.
