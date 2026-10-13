@@ -76,6 +76,24 @@ The benchmark generator and the smoke tests have **no third‑party
 dependencies** so the scaffold verifies on a bare Python 3.10+ install; the RL /
 GNN / SMT / EA stacks are only needed from Phase 3 onward.
 
+## Demo GUI
+
+A Streamlit app ([`app/streamlit_app.py`](app/streamlit_app.py)) runs the full
+pipeline on a benchmark, an uploaded `.qasm` or pasted OpenQASM 2.0. It shows
+before/after metrics, verification status, the Pareto front, the optimized
+circuit (downloadable), and a comparison with whichever baseline compilers are
+installed (Qiskit O0–O3, TKET, PyZX, BQSKit).
+
+```bash
+pip install -r app/requirements.txt
+streamlit run app/streamlit_app.py
+```
+
+**Live demo:** not deployed yet (#60). To deploy on
+[Streamlit Community Cloud](https://share.streamlit.io): *Create app* → this
+repo, branch `main`, main file `app/streamlit_app.py`, Python 3.12. The
+hosted app has no torch, so Module B uses its rule-based candidate generator.
+
 ## Documentation index
 
 * [Architecture](docs/architecture.md) — the six‑stage closed‑loop pipeline
