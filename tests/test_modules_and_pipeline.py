@@ -183,3 +183,74 @@ def test_pipeline_on_generated_benchmark(tmp_path):
     p.write_text(c.text())
     res = optimize(str(p))
     assert res.pareto_front
+
+
+# --- #31: novelty wiring in HybridOptimizer -------------------------------------
+
+from qco.ir import parse
+from qco.pipeline import HybridOptimizer, PipelineConfig, _compact
+
+
+def test_pipeline_reports_block_count_not_front_size():
+    ir = parse("benchmarks/circuits/qaoa_n16_p1.qasm")
+    res = optimize(ir, PipelineConfig(solver_budget_s=1.0))
+    from qco.graphs import partition_circuit
+
+    assert res.blocks == len(partition_circuit(ir))
+
+
+def test_pipeline_verifies_blocks_of_wide_circuits():
+    # N2: 16 qubits is past the dense ceiling, but each block is checked on its
+    # own <= 8 active qubits, so nothing is left unverified.
+    ir = parse("benchmarks/circuits/qft_n16.qasm")
+    res = optimize(ir, PipelineConfig(solver_budget_s=1.0))
+    assert res.verified
+    assert res.unverified_blocks == 0
+    assert all(p.circuit.num_qubits == 16 for p in res.pareto_front)
+    assert min(p.objective.gate_count for p in res.pareto_front) <= ir.gate_count()
+
+
+def test_compact_relabels_onto_active_qubits():
+    a = IntermediateRepresentation(20).add("cx", [3, 17]).add("h", [9])
+    b = IntermediateRepresentation(20).add("h", [9]).add("cx", [3, 17])
+    ca, cb = _compact(a, b)
+    assert ca.num_qubits == cb.num_qubits == 3
+    assert [g.qubits for g in ca] == [(0, 2), (1,)]
+    assert EquivalenceChecker().check(ca, cb).equivalent
+
+
+def test_unverifiable_rewrite_is_rejected_not_accepted():
+    # > 8 active qubits, non-phase-poly gates: the checker can only say
+    # "unverified", and the pipeline must keep the original.
+    opt = HybridOptimizer()
+    orig = IntermediateRepresentation(10)
+    for q in range(10):
+        orig.add("h", [q])
+    for q in range(9):
+        orig.add("cx", [q, q + 1])
+    proposed = IntermediateRepresentation(10, list(orig.gates[:-1]))
+    kept, accepted, result = opt.revert_rewrite(orig, proposed, block_idx=3)
+    assert not accepted and result.method == "unverified"
+    assert kept is orig
+    assert opt._unverified == {3}
+
+
+def test_feedback_loop_stops_when_reward_stops_improving():
+    ir = _hh_circuit()
+    res = optimize(ir, PipelineConfig(feedback_iterations=5, calibration="default"))
+    assert 1 <= len(res.reward_history) < 5      # second pass has nothing left to gain
+    assert res.reward_history[-1] <= 0 or len(res.reward_history) == 1
+    assert res.reward == res.reward_history[-1]
+
+
+def test_resynthesized_windows_are_stitched_back_in():
+    # N1: H-CX-H == CZ on each pair; re-synthesis shrinks both windows.
+    c = IntermediateRepresentation(4, name="two_windows")
+    c.add("h", [1]).add("cx", [0, 1]).add("h", [1])
+    c.add("h", [3]).add("cx", [2, 3]).add("h", [3])
+    opt = HybridOptimizer(PipelineConfig(solver_budget_s=10.0))
+    res = opt.run(c)
+    best = min(res.pareto_front, key=lambda p: p.objective.gate_count).circuit
+    assert best.gate_count() < c.gate_count()
+    assert res.solver_time_s > 0
+    assert EquivalenceChecker().check(c, best).equivalent

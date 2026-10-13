@@ -1,16 +1,26 @@
 """Wires Stage 1..6 with the closed-loop feedback edge (docs/architecture.md).
 
-Phase 2 status: the pipeline runs end-to-end using the implemented pieces
-(parser, DAG/hypergraph, fallback partitioner, Module A greedy commute, Module B
-rule-based cancellation, Module C numeric equivalence check, Module D
-non-dominated sort, Stage 6 metrics). Learned models drop in during Phase 3
-without changing this file's structure.
+Novelty wiring (#31, docs/novelty_plan.md):
+
+* N2 - every check runs on the block/window *compacted* to its active qubits
+  (``_compact``), and the partitioner caps blocks at 8 qubits, so blocks of
+  arbitrarily wide circuits are verified densely; phase-polynomial / explicit
+  ``unverified`` results come from ``EquivalenceChecker`` beyond that.
+  Unverifiable rewrites are rejected, never silently accepted.
+* N1 - blocks are carved into re-synthesis-sized windows, ranked by GNN
+  candidate score, and re-synthesized best-first until ``solver_budget_s``.
+* N3 - each block's verified variants go to ``NSGA2Compiler.evolve(...,
+  block_variants=...)``; the front is equivalent by construction.
+* N4 - reward uses ``PipelineConfig.calibration``; the feedback loop stops once
+  a pass no longer improves it. (Online reward into the PPO agent is #35.)
+* N5 - rule-proven cancellations skip verification, confident GNN ones get the
+  numeric check, the rest the full (SMT-capable) checker.
 """
 
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass, field
-
 from typing import Any
 
 from qco.evaluation.metrics import scalarized_reward
@@ -18,6 +28,7 @@ from qco.graphs.partitioning import Block, partition_circuit
 from qco.ir.intermediate_representation import IntermediateRepresentation
 from qco.ir.parser import parse
 from qco.modules.evolutionary.nsga2 import NSGA2Compiler, ParetoPoint
+from qco.modules.gnn_cancellation.features import rule_based_candidates
 from qco.modules.gnn_cancellation.model import GNNCancellationPredictor
 from qco.modules.rl_scheduler.agent import RLScheduler
 from qco.modules.smt_verifier.bounded_optimizer import BoundedResynthesizer, ResynthConfig
@@ -41,8 +52,11 @@ class PipelineConfig:
     partition_backend: str = "auto"
     verify_rewrites: bool = True
     enable_resynthesis: bool = True
-    feedback_iterations: int = 1     # closed-loop passes; >1 needs a trained RL agent
+    feedback_iterations: int = 1     # max closed-loop passes; stops early once reward <= 0
     resynth_config: ResynthConfig | None = None
+    calibration: str = "default"     # N4: device profile for reward + RL (qco.evaluation.calibration)
+    solver_budget_s: float = 5.0     # N1: total exact re-synthesis time per run
+    confident_threshold: float = 0.9 # N5: GNN score above which a numeric check suffices
 
 
 @dataclass(slots=True)
@@ -53,17 +67,44 @@ class PipelineResult:
     verified: bool
     reverts: int = 0
     revert_events: list[RevertEvent] = field(default_factory=list)
+    unverified_blocks: int = 0       # blocks where a rewrite was rejected as unverifiable
+    solver_time_s: float = 0.0       # exact re-synthesis time actually spent (N1)
+    reward_history: list[float] = field(default_factory=list)
+
+
+def _compact(
+    a: IntermediateRepresentation, b: IntermediateRepresentation
+) -> tuple[IntermediateRepresentation, IntermediateRepresentation]:
+    """Relabel both circuits onto their joint active qubits 0..k-1 (k <= block width)."""
+    active = sorted({q for g in (*a.gates, *b.gates) for q in g.qubits})
+    if len(active) == a.num_qubits:
+        return a, b
+    m = {q: i for i, q in enumerate(active)}
+    k = max(len(active), 1)
+
+    def remap(ir: IntermediateRepresentation) -> IntermediateRepresentation:
+        gates = [type(g)(g.name, tuple(m[q] for q in g.qubits), g.params, g.tag) for g in ir.gates]
+        return IntermediateRepresentation(k, gates, ir.name)
+
+    return remap(a), remap(b)
 
 
 class HybridOptimizer:
     def __init__(self, config: PipelineConfig | None = None):
         self.config = config or PipelineConfig()
         self.rl = RLScheduler()
+        self.rl.config.calibration = self.config.calibration
         self.gnn = GNNCancellationPredictor()
         self.checker = EquivalenceChecker()
+        self.cheap_checker = EquivalenceChecker(backend="numeric")
         self.resynthesizer = BoundedResynthesizer(self.config.resynth_config)
         self.ea = NSGA2Compiler()
         self.revert_events: list[RevertEvent] = []
+        self._solver_left = self.config.solver_budget_s
+        self._unverified: set[int] = set()
+
+    def _check(self, original, rewrite, checker: EquivalenceChecker | None = None) -> EquivalenceResult:
+        return (checker or self.checker).check(*_compact(original, rewrite))
 
     def revert_rewrite(
         self,
@@ -72,6 +113,7 @@ class HybridOptimizer:
         fallback: IntermediateRepresentation | None = None,
         block_idx: int = 0,
         stage: str = "stage_4",
+        checker: EquivalenceChecker | None = None,
     ) -> tuple[IntermediateRepresentation, bool, EquivalenceResult]:
         """Formal revert protocol contract (Sprint 3 / Module C verification invariant).
 
@@ -85,9 +127,11 @@ class HybridOptimizer:
         Returns:
             (restored_or_accepted_block, accepted: bool, EquivalenceResult)
         """
-        result = self.checker.check(original, proposed)
+        result = self._check(original, proposed, checker)
         if result.equivalent:
             return proposed, True, result
+        if result.method == "unverified":
+            self._unverified.add(block_idx)
 
         # Proposed rewrite rejected! Execute revert protocol.
         self.revert_events.append(
@@ -103,7 +147,7 @@ class HybridOptimizer:
 
         # Check fallback (e.g. scheduled block from Module A)
         if fallback is not None:
-            fallback_res = self.checker.check(original, fallback)
+            fallback_res = self._check(original, fallback)
             if fallback_res.equivalent:
                 return fallback, False, result
 
@@ -112,75 +156,110 @@ class HybridOptimizer:
 
     # -- Stage 4 on one block -------------------------------------------------
     def _optimize_block(self, block: Block, block_idx: int = 0) -> IntermediateRepresentation:
+        """Best verified variant of ``block`` (fewest gates, then depth)."""
+        return self._block_variants(block, block_idx)[0]
+
+    def _block_variants(self, block: Block, block_idx: int = 0) -> list[IntermediateRepresentation]:
+        """Verified variants of ``block``, best first; ``block.ir`` is always included."""
         original = block.ir.copy()
+        verify = self.config.verify_rewrites
+        variants = [original]
 
         # Module A: reorder / commute.
         scheduled = self.rl.schedule(original)
+        if not verify or self.revert_rewrite(original, scheduled, None, block_idx, "module_a_schedule")[1]:
+            variants.append(scheduled)
+        base = variants[-1]
 
-        # Module B: rank cancellation candidates, then apply the safe ones.
-        candidate = scheduled.copy()
-        cancels = self.gnn.predict(candidate)
+        # Module B: drop non-overlapping inverse pairs, gated by confidence (N5).
         drop: set[int] = set()
-        for c in cancels:
+        applied = []
+        for c in self.gnn.predict(base):
             if c.kind == "inverse_pair" and c.a not in drop and c.b not in drop:
                 drop.update({c.a, c.b})
+                applied.append(c)
         if drop:
             candidate = IntermediateRepresentation(
-                num_qubits=candidate.num_qubits,
-                gates=[g for i, g in enumerate(candidate.gates) if i not in drop],
-                name=candidate.name,
+                base.num_qubits, [g for i, g in enumerate(base.gates) if i not in drop], base.name
             )
+            proven = {(c.kind, c.gate_indices) for c in rule_based_candidates(base)}
+            if not verify or all((c.kind, c.gate_indices) in proven for c in applied):
+                variants.append(candidate)
+            else:
+                confident = min(c.score for c in applied) >= self.config.confident_threshold
+                checker = self.cheap_checker if confident else self.checker
+                if self.revert_rewrite(original, candidate, None, block_idx,
+                                       "module_b_cancellation", checker)[1]:
+                    variants.append(candidate)
 
-        # Module C: verify every rewrite before accepting it.
-        current = original
-        if self.config.verify_rewrites and original.num_qubits <= 8:
-            accepted_block, accepted, result = self.revert_rewrite(
-                original=original,
-                proposed=candidate,
-                fallback=scheduled,
-                block_idx=block_idx,
-                stage="module_b_cancellation",
-            )
-            current = accepted_block
-        else:
-            current = candidate
+        # N1: exact re-synthesis on GNN-ranked windows, under the solver budget.
+        resynth = self._resynthesize_windows(min(variants, key=len), block_idx)
+        if resynth is not None:
+            variants.append(resynth)
 
-        # Stage 4 / Module C: Bounded-window exact re-synthesis in the loop (Issue #33)
-        if self.config.enable_resynthesis and self.resynthesizer.applicable(current):
-            resynth_ir, status, solve_s = self.resynthesizer.resynthesize(current)
-            if resynth_ir.gate_count() < current.gate_count():
-                if self.config.verify_rewrites and original.num_qubits <= 8:
-                    current, accepted, result = self.revert_rewrite(
-                        original=original,
-                        proposed=resynth_ir,
-                        fallback=current,
-                        block_idx=block_idx,
-                        stage="bounded_resynthesis",
-                    )
-                else:
-                    current = resynth_ir
+        variants.sort(key=lambda v: (v.gate_count(), v.depth()))
+        return variants
 
-        return current
+    def _resynthesize_windows(self, ir: IntermediateRepresentation, block_idx: int):
+        """Replace windows of ``ir`` with smaller verified re-syntheses; None if nothing improved."""
+        if not self.config.enable_resynthesis or self._solver_left <= 0:
+            return None
+        rc = self.resynthesizer.config
+        windows = partition_circuit(ir, max_block_gates=rc.max_gates, max_block_qubits=rc.max_qubits)
+        # ponytail: window score = summed GNN candidate scores (rule-based until
+        # #28's window head lands), ties broken by size; swap in the pooled head then.
+        ranked = sorted(
+            windows,
+            key=lambda w: (-sum(c.score for c in self.gnn.predict(w.ir, threshold=0.0)), -len(w.ir)),
+        )
+        replaced: dict[int, IntermediateRepresentation] = {}
+        for w in ranked:
+            if self._solver_left <= 0:
+                break
+            if not self.resynthesizer.applicable(w.ir):
+                continue
+            t0 = time.perf_counter()
+            timeout = min(rc.timeout_s, self._solver_left)
+            new_ir, _status, _ = self.resynthesizer.resynthesize(w.ir, timeout_s=timeout)
+            self._solver_left -= time.perf_counter() - t0
+            if new_ir.gate_count() >= w.ir.gate_count():
+                continue
+            if not self.config.verify_rewrites or self.revert_rewrite(
+                w.ir, new_ir, None, block_idx, "bounded_resynthesis"
+            )[1]:
+                replaced[w.index] = new_ir
+        if not replaced:
+            return None
+        out = IntermediateRepresentation(ir.num_qubits, name=ir.name)
+        for w in windows:  # windows compose in list order (partitioner contract)
+            out.gates.extend(replaced.get(w.index, w.ir).gates)
+        return out
 
     # -- full pipeline -----------------------------------------------------
     def run(self, source) -> PipelineResult:
         circuit: IntermediateRepresentation = parse(source)
-        verified = True
         self.revert_events = []
+        self._unverified = set()
+        self._solver_left = self.config.solver_budget_s
+        verified = True
+        rewards: list[float] = []
+        variants: list[list[IntermediateRepresentation]] = []
 
-        for _ in range(self.config.feedback_iterations):
+        for _ in range(max(self.config.feedback_iterations, 1)):
             blocks = partition_circuit(
                 circuit,
                 max_block_gates=self.config.max_block_gates,
                 backend=self.config.partition_backend,
             )
-            optimized_blocks = [self._optimize_block(b, idx) for idx, b in enumerate(blocks)]
+            variants = [self._block_variants(b, idx) for idx, b in enumerate(blocks)]
 
-            # Stitch blocks back in original order.
+            # Stitch the best variant of each block, in partition order.
             stitched = IntermediateRepresentation(num_qubits=circuit.num_qubits, name=circuit.name)
-            for ob in optimized_blocks:
-                stitched.gates.extend(ob.gates)
+            for v in variants:
+                stitched.gates.extend(v[0].gates)
 
+            # Blocks compose by the partitioner's contract, so per-block checks
+            # cover the whole circuit; the global check is a cheap extra when small.
             if circuit.num_qubits <= 8:
                 stitch_res = self.checker.check(circuit, stitched)
                 if not stitch_res.equivalent:
@@ -196,39 +275,29 @@ class HybridOptimizer:
                     )
                     verified = False
                     stitched = circuit  # reject the pass, keep correctness
+                    variants = [[b.ir] for b in blocks]
 
-            reward = scalarized_reward(circuit, stitched)  # Stage 6 -> Module A (closed loop)
+            # Stage 6 -> closed loop (N4): stop once a pass stops paying off.
+            rewards.append(scalarized_reward(circuit, stitched, calibration=self.config.calibration))
             circuit = stitched
+            if rewards[-1] <= 0:
+                break
 
-        # Stage 5: NSGA-II searches gate-sequence variants of the verified candidate.
-        front = self.ea.evolve([circuit])
+        # Stage 5 (N3): NSGA-II recombines verified block variants -> certified front.
+        front = self.ea.evolve([circuit], block_variants=variants)
         if self.config.verify_rewrites and circuit.num_qubits <= 8:
-            verified_front = []
-            for p in front:
-                p_res = self.checker.check(circuit, p.circuit)
-                if p_res.equivalent:
-                    verified_front.append(p)
-                else:
-                    self.revert_events.append(
-                        RevertEvent(
-                            block_index=-1,
-                            stage="nsga2_evolution",
-                            reason=p_res.detail,
-                            pre_rewrite=circuit.copy(),
-                            rejected_rewrite=p.circuit.copy(),
-                            counterexample=p_res.counterexample,
-                        )
-                    )
-            front = verified_front
-            if not front:
-                front = [self.ea.score(circuit)]
+            assert all(self.checker.check(circuit, p.circuit).equivalent for p in front), \
+                "N3 invariant broken: NSGA-II front member not equivalent"
         return PipelineResult(
             pareto_front=front,
-            reward=reward,
-            blocks=len(front),
-            verified=verified,
+            reward=rewards[-1],
+            blocks=len(variants),
+            verified=verified and self.config.verify_rewrites,
             reverts=len(self.revert_events),
             revert_events=list(self.revert_events),
+            unverified_blocks=len(self._unverified),
+            solver_time_s=self.config.solver_budget_s - self._solver_left,
+            reward_history=rewards,
         )
 
 
