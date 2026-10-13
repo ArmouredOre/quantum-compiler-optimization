@@ -294,6 +294,15 @@ def _gate_on_register(g, n: int):
     )
 
 
+_NP_CACHE_1Q: dict[str, Any] = {}
+_NP_CACHE_2Q: dict[str, Any] = {}
+if _HAS_NUMPY:
+    for _nm in ("id", "i", "h", "x", "y", "z", "s", "t", "sdg", "tdg"):
+        _NP_CACHE_1Q[_nm] = np.array(_one_qubit(_nm, ()), dtype=complex)
+    for _nm in ("cx", "cz", "swap"):
+        _NP_CACHE_2Q[_nm] = np.array(_two_qubit(_nm, ()), dtype=complex).reshape(2, 2, 2, 2)
+
+
 def circuit_unitary(ir: IntermediateRepresentation) -> list[list[Complex]]:
     """Dense unitary of ``ir`` (little-endian qubit order). <= 8 qubits."""
     n = ir.num_qubits
@@ -308,12 +317,16 @@ def circuit_unitary(ir: IntermediateRepresentation) -> list[list[Complex]]:
         for g in ir.gates:
             k = len(g.qubits)
             if k == 1:
-                mat = np.array(_one_qubit(g.name, g.params), dtype=complex)
+                mat = _NP_CACHE_1Q.get(g.name) if not g.params else None
+                if mat is None:
+                    mat = np.array(_one_qubit(g.name, g.params), dtype=complex)
                 ax = n - 1 - g.qubits[0]
                 res = np.tensordot(mat, u, axes=([1], [ax]))
                 u = np.moveaxis(res, 0, ax)
             elif k == 2:
-                mat = np.array(_two_qubit(g.name, g.params), dtype=complex).reshape(2, 2, 2, 2)
+                mat = _NP_CACHE_2Q.get(g.name) if not g.params else None
+                if mat is None:
+                    mat = np.array(_two_qubit(g.name, g.params), dtype=complex).reshape(2, 2, 2, 2)
                 ax = [n - 1 - q for q in g.qubits]
                 res = np.tensordot(mat, u, axes=([2, 3], ax))
                 u = np.moveaxis(res, (0, 1), ax)

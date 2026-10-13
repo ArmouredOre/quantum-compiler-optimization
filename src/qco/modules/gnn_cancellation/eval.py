@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import random
 from dataclasses import dataclass
-from typing import Sequence
+from pathlib import Path
+from typing import Callable, Sequence
 
 from qco.ir.intermediate_representation import IntermediateRepresentation
 from qco.modules.gnn_cancellation.features import (
@@ -122,3 +123,102 @@ def held_out_split(
     n_test = max(1, int(round(len(pooled) * test_fraction)))
     n_test = min(n_test, len(pooled) - 1)
     return pooled[n_test:], pooled[:n_test]
+
+
+# ---------------------------------------------------------------------------
+# Sprint 3 (#25): verified ground truth, threshold calibration, P/R table
+# ---------------------------------------------------------------------------
+
+GoldCircuit = tuple[IntermediateRepresentation, list[CancellationCandidate]]
+
+
+def train_val_test_split(
+    items: Sequence,
+    *,
+    val_fraction: float = 0.2,
+    test_fraction: float = 0.2,
+    seed: int = 0,
+) -> tuple[list, list, list]:
+    """Seeded, disjoint ``(train, val, test)`` split."""
+    if val_fraction + test_fraction >= 1.0:
+        raise ValueError("val_fraction + test_fraction must be < 1")
+    train_val, test = held_out_split(items, test_fraction=test_fraction, seed=seed)
+    rel_val = val_fraction / (1.0 - test_fraction)
+    train, val = held_out_split(train_val, test_fraction=rel_val, seed=seed + 1)
+    return train, val, test
+
+
+def evaluate_on_gold(
+    gold_circuits: Sequence[GoldCircuit],
+    predict: Callable[[IntermediateRepresentation], Sequence[CancellationCandidate]],
+) -> ClassificationMetrics:
+    """Micro P/R/F1 of ``predict(ir)`` against precomputed gold candidates."""
+    tp = fp = fn = 0
+    for ir, gold in gold_circuits:
+        m = compare_candidates(gold, predict(ir))
+        tp += m.tp
+        fp += m.fp
+        fn += m.fn
+    return metrics_from_counts(tp, fp, fn)
+
+
+@dataclass(slots=True)
+class ThresholdSweepPoint:
+    threshold: float
+    metrics: ClassificationMetrics
+
+
+def sweep_thresholds(
+    predictor,
+    gold_circuits: Sequence[GoldCircuit],
+    thresholds: Sequence[float] | None = None,
+) -> list[ThresholdSweepPoint]:
+    """Metrics at each decision threshold (``predictor.predict(ir, threshold=t)``)."""
+    if thresholds is None:
+        thresholds = [round(0.05 * k, 2) for k in range(1, 20)]
+    return [
+        ThresholdSweepPoint(
+            t, evaluate_on_gold(gold_circuits, lambda ir, t=t: predictor.predict(ir, threshold=t))
+        )
+        for t in thresholds
+    ]
+
+
+def calibrate_threshold(
+    predictor,
+    val_gold: Sequence[GoldCircuit],
+    thresholds: Sequence[float] | None = None,
+) -> tuple[float, list[ThresholdSweepPoint]]:
+    """Pick the decision threshold maximising F1 on the validation split (ties -> higher)."""
+    sweep = sweep_thresholds(predictor, val_gold, thresholds)
+    if not sweep:
+        raise ValueError("no thresholds to sweep")
+    best = sweep[0]
+    for p in sweep[1:]:
+        if p.metrics.f1 >= best.metrics.f1:
+            best = p
+    return best.threshold, sweep
+
+
+def build_pr_table(
+    test_gold: Sequence[GoldCircuit],
+    systems: dict[str, Callable[[IntermediateRepresentation], Sequence[CancellationCandidate]]],
+) -> str:
+    """Markdown P/R/F1 table; every system is scored against the same verified gold."""
+    lines = [
+        "| System | Precision | Recall | F1 | TP | FP | FN |",
+        "|---|---|---|---|---|---|---|",
+    ]
+    for name, predict in systems.items():
+        m = evaluate_on_gold(test_gold, predict)
+        lines.append(
+            f"| {name} | {m.precision:.3f} | {m.recall:.3f} | {m.f1:.3f} | {m.tp} | {m.fp} | {m.fn} |"
+        )
+    return "\n".join(lines) + "\n"
+
+
+def write_pr_table(path: str | Path, markdown: str, *, header: str = "") -> None:
+    dest = Path(path)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_text((header + "\n\n" if header else "") + markdown, encoding="utf-8")
+    

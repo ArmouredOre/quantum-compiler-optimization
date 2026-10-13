@@ -1,0 +1,26 @@
+{
+  "cr_only": {
+    "depth_red_pct": 4.665462676298589,
+    "gate_red_pct": 12.412222463919177,
+    "n": 12,
+    "equivalent": true
+  },
+  "random": {
+    "depth_red_pct": 8.95900392320671,
+    "gate_red_pct": 12.412222463919177,
+    "n": 12,
+    "equivalent": true
+  },
+  "greedy_depth": {
+    "depth_red_pct": 12.440363572329517,
+    "gate_red_pct": 12.412222463919177,
+    "n": 12,
+    "equivalent": true
+  },
+  "agent": {
+    "depth_red_pct": 13.36915614198896,
+    "gate_red_pct": 12.412222463919177,
+    "n": 12,
+    "equivalent": true
+  }
+}

@@ -1,10 +1,12 @@
-.PHONY: help setup benchmarks check test clean
+.PHONY: help setup benchmarks check test clean train-rl train-rl-smoke
 
 help:
 	@echo "setup       - create venv and install dev extras"
 	@echo "benchmarks  - (re)generate the OpenQASM benchmark suite"
 	@echo "check       - report which optional research stacks are importable"
 	@echo "test        - run the Phase 2 smoke tests"
+	@echo "train-rl   - full Module A PPO training (configs/rl_ppo_5q.yaml)"
+	@echo "train-rl-smoke - tiny Module A training smoke run"
 	@echo "clean       - remove caches and build artifacts"
 
 setup:
@@ -19,6 +21,12 @@ check:
 
 test:
 	python3 -m pytest
+
+train-rl:
+	python3 scripts/train_rl.py --config configs/rl_ppo_5q.yaml --out runs/rl_5q --compare
+
+train-rl-smoke:
+	python3 scripts/train_rl.py --config configs/rl_smoke.yaml --out runs/rl_smoke
 
 clean:
 	rm -rf build dist *.egg-info src/*.egg-info .pytest_cache .mypy_cache .ruff_cache
