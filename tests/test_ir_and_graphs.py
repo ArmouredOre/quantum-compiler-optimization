@@ -54,7 +54,6 @@ def test_partition_covers_all_gates():
 import glob
 import itertools
 
-import numpy as np
 import pytest
 
 from qco.graphs import commutes
@@ -65,17 +64,28 @@ from qco.modules.smt_verifier.equivalence import circuit_unitary
 BENCHMARKS = sorted(glob.glob("benchmarks/circuits/*.qasm"))
 
 
+def _allclose(a, b, tol=1e-9):
+    """Elementwise closeness for flat or nested (matrix) sequences; no numpy in CI."""
+    rows_a = [list(r) for r in a] if a and hasattr(a[0], "__len__") else [list(a)]
+    rows_b = [list(r) for r in b] if b and hasattr(b[0], "__len__") else [list(b)]
+    return len(rows_a) == len(rows_b) and all(
+        len(ra) == len(rb) and all(abs(x - y) <= tol for x, y in zip(ra, rb))
+        for ra, rb in zip(rows_a, rows_b)
+    )
+
+
 def _same_gates(a, b):
     return a.num_qubits == b.num_qubits and [(g.name, g.qubits) for g in a] == [
         (g.name, g.qubits) for g in b
-    ] and all(np.allclose(g.params, h.params) for g, h in zip(a, b))
+    ] and all(_allclose(g.params, h.params) for g, h in zip(a, b))
 
 
 def test_every_ir_gate_has_inverse_and_checker_matrix():
     for name, n in ARITY.items():
         g = Gate(name, tuple(range(n)), (0.3,) if name in PARAMETRIC else ())
         ir = IntermediateRepresentation(n, [g, g.inverse()])
-        assert np.allclose(circuit_unitary(ir), np.eye(2**n)), name
+        eye = [[1.0 if i == j else 0.0 for j in range(2**n)] for i in range(2**n)]
+        assert _allclose(circuit_unitary(ir), eye), name
 
 
 def test_qasm_multi_register_aliases_and_custom_gate_bodies():
@@ -164,7 +174,7 @@ def test_commutation_table_is_sound():
             if set(a.qubits) & set(qb) and commutes(a, b):
                 ab = circuit_unitary(IntermediateRepresentation(width, [a, b]))
                 ba = circuit_unitary(IntermediateRepresentation(width, [b, a]))
-                assert np.allclose(ab, ba), (a, b)
+                assert _allclose(ab, ba), (a, b)
 
 
 def test_commutation_table_hand_cases():
