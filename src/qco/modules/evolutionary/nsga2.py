@@ -11,13 +11,14 @@ Sprint-1 seeds-only non-dominated sort when pymoo isn't installed, same
 optional-dependency pattern as the other modules (fallback numeric checker,
 rule-based cancellation, ...).
 
-Mutation (commute / drop-candidate / reorder) is equivalence-preserving by
-construction, built on Module B's commutation/inverse-pair logic
-(``gates_commute`` / ``rule_based_candidates`` - issues #6 and #11, closed, so
-this is their finished Sprint 1+2 work, not a stand-in subject to rework).
-Crossover is deliberately NOT equivalence-preserving - splicing two different
-parents' gate sequences fundamentally isn't - which is why the pipeline still
-re-verifies the evolved front before returning it (see qco.pipeline).
+Novelty N3 (#30): the genome is a vector of *variant indices*, one per block.
+Every variant of block ``i`` is equivalent to block ``i``, and blocks compose
+in list order (``qco.graphs.partitioning`` contract), so every genome decodes
+to a circuit equivalent to the input - crossover (uniform, per block) and
+mutation (switch a block's variant, or derive a new variant with the
+equivalence-preserving commute / drop-candidate / reorder ops built on Module
+B's ``gates_commute`` / ``rule_based_candidates``) never leave the
+equivalence class. The front is certified by construction, no post-hoc filter.
 """
 
 from __future__ import annotations
@@ -26,6 +27,7 @@ import math
 import random
 from dataclasses import dataclass
 
+from qco.graphs.partitioning import partition_circuit
 from qco.ir.intermediate_representation import Gate, IntermediateRepresentation
 from qco.modules.gnn_cancellation.features import gates_commute, rule_based_candidates
 
@@ -96,21 +98,32 @@ class NSGA2Compiler:
         self.config = config or NSGA2Config()
         self.fidelity_surrogate = fidelity_surrogate or structure_aware_fidelity_surrogate
 
-    def evolve(self, seeds: list[IntermediateRepresentation]) -> list[ParetoPoint]:
-        """Run NSGA-II (genetic search) seeded with ``seeds``, return the Pareto front.
+    def evolve(
+        self,
+        seeds: list[IntermediateRepresentation],
+        block_variants: list[list[IntermediateRepresentation]] | None = None,
+    ) -> list[ParetoPoint]:
+        """Run NSGA-II over block-variant genomes, return the Pareto front.
 
-        Without pymoo installed, degrades to scoring the seeds as-is (Sprint 1
-        behaviour) rather than failing outright.
+        ``block_variants[i]`` lists circuits each equivalent to block ``i`` (the
+        caller verified them); concatenating one variant per block, in order,
+        must give a circuit equivalent to the input. Without it, ``seeds[0]`` is
+        partitioned and each block starts with itself as its only variant.
+        Extra seeds are scored as-is and merged into the front.
+
+        Without pymoo installed, degrades to scoring the seeds (plus the first
+        variant of every block) rather than failing outright.
         """
-        if not seeds:
+        if not seeds and not block_variants:
             return []
-        if _HAVE_PYMOO:
-            return self._evolve_pymoo(seeds)
-        return self._score_only(seeds)
-
-    def _score_only(self, seeds: list[IntermediateRepresentation]) -> list[ParetoPoint]:
-        points = [self.score(c) for c in seeds]
-        return non_dominated_front(points)
+        if block_variants is None:
+            block_variants = [[b.ir] for b in partition_circuit(seeds[0])]
+        pools = [list(v) for v in block_variants if v]
+        extra = [self.score(c) for c in seeds]
+        if not _HAVE_PYMOO or not pools:
+            base = [self.score(_decode(pools, (0,) * len(pools)))] if pools else []
+            return non_dominated_front(base + extra)
+        return non_dominated_front(self._evolve_pymoo(pools) + extra)
 
     def score(self, circuit: IntermediateRepresentation) -> ParetoPoint:
         return ParetoPoint(
@@ -122,22 +135,32 @@ class NSGA2Compiler:
             ),
         )
 
-    def _evolve_pymoo(self, seeds: list[IntermediateRepresentation]) -> list[ParetoPoint]:
-        problem = _CircuitProblem(self.fidelity_surrogate)
+    def _evolve_pymoo(self, pools: list[list[IntermediateRepresentation]]) -> list[ParetoPoint]:
+        problem = _BlockProblem(pools, self.fidelity_surrogate)
         algorithm = NSGA2(
-            pop_size=max(self.config.pop_size, len(seeds)),
-            sampling=_SeedSampling(seeds),
-            crossover=_GateSequenceCrossover(self.config.crossover_prob),
-            mutation=_GateSequenceMutation(self.config.mutation_prob),
+            pop_size=self.config.pop_size,
+            sampling=_BlockSampling(pools),
+            crossover=_BlockCrossover(self.config.crossover_prob),
+            mutation=_BlockMutation(pools, self.config.mutation_prob),
             eliminate_duplicates=False,  # object-dtype genome: no cheap distance metric
         )
+        # copy_algorithm=False: the mutation operator must grow the *same* pools
+        # the problem decodes from (pymoo deep-copies the algorithm otherwise).
         res = minimize(problem, algorithm, ("n_gen", self.config.generations),
-                        seed=1, verbose=False)
-        circuits = [row[0] for row in res.X]
+                       copy_algorithm=False, seed=1, verbose=False)
         return [
-            ParetoPoint(circuit=c, objective=Objective(*f))
-            for c, f in zip(circuits, res.F)
+            ParetoPoint(circuit=_decode(pools, row[0]), objective=Objective(*f))
+            for row, f in zip(res.X, res.F)
         ]
+
+
+def _decode(pools: list[list[IntermediateRepresentation]], genome: tuple[int, ...]) -> IntermediateRepresentation:
+    """Concatenate the chosen variant of every block."""
+    first = pools[0][0]
+    out = IntermediateRepresentation(first.num_qubits, name=first.name.split("#")[0])
+    for pool, idx in zip(pools, genome):
+        out.gates.extend(pool[idx].gates)
+    return out
 
 
 # --------------------------------------------------------------------------
@@ -267,40 +290,43 @@ def mutate_validity_preserving(
 
 
 # --------------------------------------------------------------------------
-# pymoo plumbing: variable-length gate-sequence genome as an object-dtype
-# "single variable" (pymoo's standard trick for non-array representations).
+# pymoo plumbing: genome = tuple of per-block variant indices, stored as an
+# object-dtype "single variable" (pymoo's trick for non-array representations).
+# The variant pools are shared and grow as mutation derives new variants.
 # --------------------------------------------------------------------------
 
 if _HAVE_PYMOO:
 
-    class _CircuitProblem(ElementwiseProblem):
-        def __init__(self, fidelity_surrogate):
+    class _BlockProblem(ElementwiseProblem):
+        def __init__(self, pools, fidelity_surrogate):
             super().__init__(n_var=1, n_obj=3, n_constr=0)
+            self.pools = pools
             self.fidelity_surrogate = fidelity_surrogate
 
         def _evaluate(self, x, out, *args, **kwargs):
-            circuit: IntermediateRepresentation = x[0]
+            circuit = _decode(self.pools, x[0])
             out["F"] = [
                 float(circuit.gate_count()),
                 float(circuit.depth()),
                 1.0 - self.fidelity_surrogate(circuit),
             ]
 
-    class _SeedSampling(Sampling):
-        """Seeds the initial population by cycling the pipeline's candidate(s)."""
+    class _BlockSampling(Sampling):
+        """Individual 0 is the unmodified circuit; the rest pick random variants."""
 
-        def __init__(self, seeds: list[IntermediateRepresentation]):
+        def __init__(self, pools):
             super().__init__()
-            self.seeds = seeds
+            self.pools = pools
 
         def _do(self, problem, n_samples, **kwargs):
+            rng = random.Random(0)
             X = np.empty((n_samples, 1), dtype=object)
             for i in range(n_samples):
-                X[i, 0] = self.seeds[i % len(self.seeds)].copy()
+                X[i, 0] = tuple(0 if i == 0 else rng.randrange(len(p)) for p in self.pools)
             return X
 
-    class _GateSequenceCrossover(Crossover):
-        """One-point crossover over the two parents' gate lists."""
+    class _BlockCrossover(Crossover):
+        """Uniform crossover: each block's variant index comes from either parent."""
 
         def __init__(self, prob: float):
             super().__init__(2, 2, prob=prob)
@@ -310,25 +336,19 @@ if _HAVE_PYMOO:
             Y = np.empty_like(X)
             rng = random.Random()
             for k in range(n_matings):
-                p1: IntermediateRepresentation = X[0, k, 0]
-                p2: IntermediateRepresentation = X[1, k, 0]
-                g1, g2 = p1.gates, p2.gates
-                c1 = rng.randint(0, len(g1))
-                c2 = rng.randint(0, len(g2))
-                child1 = p1.copy()
-                child1.gates = g1[:c1] + g2[c2:]
-                child2 = p2.copy()
-                child2.gates = g2[:c2] + g1[c1:]
-                Y[0, k, 0] = child1
-                Y[1, k, 0] = child2
+                a, b = X[0, k, 0], X[1, k, 0]
+                swap = [rng.random() < 0.5 for _ in a]
+                Y[0, k, 0] = tuple(y if s else x for x, y, s in zip(a, b, swap))
+                Y[1, k, 0] = tuple(x if s else y for x, y, s in zip(a, b, swap))
             return Y
 
-    class _GateSequenceMutation(Mutation):
-        """Random commute / drop-candidate / reorder over one circuit's gate
-        list - see ``mutate_validity_preserving`` above."""
+    class _BlockMutation(Mutation):
+        """Pick one block; switch it to another existing variant, or derive a
+        new variant via ``mutate_validity_preserving`` and switch to that."""
 
-        def __init__(self, prob: float):
+        def __init__(self, pools, prob: float):
             super().__init__(prob=prob)
+            self.pools = pools
 
         def _do(self, problem, X, **kwargs):
             # pymoo's Mutation.do() already decides, per individual, whether to keep
@@ -336,5 +356,15 @@ if _HAVE_PYMOO:
             # unconditionally.
             rng = random.Random()
             for i in range(len(X)):
-                X[i, 0] = mutate_validity_preserving(X[i, 0], rng)
+                genome = list(X[i, 0])
+                b = rng.randrange(len(genome))
+                pool = self.pools[b]
+                if len(pool) > 1 and rng.random() < 0.5:
+                    genome[b] = rng.randrange(len(pool))
+                else:
+                    # ponytail: pools grow without dedup (<= pop_size * generations
+                    # variants); dedupe by gate tuple if memory ever matters.
+                    pool.append(mutate_validity_preserving(pool[genome[b]], rng))
+                    genome[b] = len(pool) - 1
+                X[i, 0] = tuple(genome)
             return X
