@@ -180,4 +180,4 @@ itself. Figures for the report will be generated from the final run.
 | NSGA-II + N3 operators | `src/qco/modules/evolutionary/nsga2.py` | Merged (#55) |
 | N3 bench | `benchmarks/bench_nsga2.py` | Added |
 | Surrogate validation | `tests/test_fidelity_surrogate_validation.py` | ρ = 0.863 |
-| Pareto CSV + plots | `make eval` → `results/pareto/` | Code in #62; final run pending |
+| Pareto CSV + plots | `make eval` → `results/pareto/` | Merged (#62); final run pending |
