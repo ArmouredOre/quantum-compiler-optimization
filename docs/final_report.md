@@ -91,7 +91,7 @@ From [`novelty_plan.md`](novelty_plan.md):
 | N2 | Phase-polynomial SMT verification scales past the 8-qubit dense ceiling | ✅ #51 (phase-poly checker), #31 (block compaction) | ✅ Sahib's scaling to 64 qubits ([`module_c_final_report_section.md`](module_c_final_report_section.md)); full pipeline verified on all 26 benchmarks up to 40 qubits, 0 unverified blocks |
 | N3 | Block-level crossover → Pareto front equivalent by construction | ✅ #30 | ✅ Old operators: 0 equivalent front members on every circuit; N3: all members equivalent, ≈ 9× hypervolume ([`module_d_final_report_section.md`](module_d_final_report_section.md)) |
 | N4 | Closed loop with calibration-aware reward; schedules differ and win per backend | 🟡 reward hook + `calibration` config (#62); retraining with the real reward (#35) and per-backend policies (#29, #37) open | ⏳ Needs per-backend runs of `make eval --calibration ...` with per-backend policies |
-| N5 | GNN-confidence-gated verification: lower verification cost at equal correctness | ✅ #31 (rule-proven → skip, confident → numeric, else full checker); measurement switch `confidence_gating` (#62) | 🟡 Provisional (26 circuits, equal correctness and gate counts both ways): without the trained RL policy, gating skips 86 of 490 checks (−18%) and cuts verification time 23% (1.54 s → 1.19 s). **With** the trained RL policy and Prisha's GNN, gating never fires (0 skipped, 388 checks either way): the RL agent's Commutation-and-Reduction pass already removes what the rules would prove. Verification totals only ~1.5 s per suite (blocks are compacted to ≤ 8 qubits) vs ~52 s of solver time, so the absolute saving is small |
+| N5 | GNN-confidence-gated verification: lower verification cost at equal correctness | ✅ #31 (rule-proven → skip, confident → numeric, else full checker); measurement switch `confidence_gating` (added with this report draft) | 🟡 Provisional (26 circuits, equal correctness and gate counts both ways): without the trained RL policy, gating skips 86 of 490 checks (−18%) and cuts verification time 23% (1.54 s → 1.19 s). **With** the trained RL policy and Prisha's GNN, gating never fires (0 skipped, 388 checks either way): the RL agent's Commutation-and-Reduction pass already removes what the rules would prove. Verification totals only ~1.5 s per suite (blocks are compacted to ≤ 8 qubits) vs ~52 s of solver time, so the absolute saving is small |
 
 ## 5. Methods by Stage
 
@@ -257,7 +257,7 @@ integration — Swaraj Rane. Graph-layer follow-ups were redistributed: #45
 | Module D section | Swaraj | #44 | ✅ (pipeline results provisional) |
 | Baseline results | Swaraj | #44 | ✅ [`eval/baselines/`](eval/baselines/README.md) |
 | Final `make eval` run (qco results, ablations, N1, Pareto) | Swaraj | #36, #40 | ⏳ after #35, #34 |
-| N5 measurement (verification cost with gating on/off) | Swaraj | #44 | 🟡 harness in #62; final numbers from the final run |
+| N5 measurement (verification cost with gating on/off) | Swaraj | #44 | 🟡 harness added (`make eval` N5 table); final numbers from the final run |
 | Abstract, discussion, conclusion | Swaraj | #44 | ⏳ |
 | Demo | — | #60 | ✅ Streamlit app (`app/`) |
 | Review 3 slides | Swaraj | #44 | ⏳ |
