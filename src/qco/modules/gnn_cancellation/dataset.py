@@ -245,3 +245,73 @@ def _labelled_qasm(path: Path) -> LabelledCircuit:
     ir = from_qasm2(path.read_text(encoding="utf-8"))
     ir.name = path.stem
     return ir, rule_based_candidates(ir)
+
+from dataclasses import asdict, dataclass
+
+@dataclass(slots=True)
+class WindowLabel:
+    start: int            # gate index, inclusive
+    end: int              # gate index, exclusive
+    label: int | None     # 1 = re-synthesis shrinks it, 0 = no reduction found, None = unknown
+    gates_saved: int
+    solve_s: float
+    status: str
+
+LabelledWindows = tuple[IntermediateRepresentation, list[WindowLabel]]
+
+
+def extract_windows(ir, *, max_qubits=3, max_gates=6, min_gates=2, stride=None):
+    """Contiguous gate slices [s, e) with <= max_qubits active qubits and <= max_gates gates."""
+    n, stride = len(ir.gates), stride or max(1, max_gates // 2)
+    out = []
+    for s in range(0, n, stride):
+        qs, e = set(), s
+        while e < n and e - s < max_gates:
+            nq = qs | set(ir.gates[e].qubits)
+            if len(nq) > max_qubits:
+                break
+            qs, e = nq, e + 1
+        if e - s >= min_gates:
+            out.append((s, e))
+    return list(dict.fromkeys(out))
+
+
+def dump_resynth_labels(
+    circuits, out_dir=None, *, resynthesizer=None, timeout_s=2.0,
+    max_qubits=3, max_gates=6, stride=None,
+) -> list[LabelledWindows]:
+    """Label windows with exact re-synthesis outcomes (#27). Rule labels stay available as baseline."""
+    from qco.modules.smt_verifier.bounded_optimizer import BoundedResynthesizer, ResynthConfig
+
+    # One shared instance so the canonical-window cache actually works.
+    rs = resynthesizer or BoundedResynthesizer(
+        ResynthConfig(max_qubits=max_qubits, max_gates=max_gates, timeout_s=timeout_s)
+    )
+    result = []
+    for ir in circuits:
+        rows = []
+        for s, e in extract_windows(ir, max_qubits=max_qubits, max_gates=max_gates, stride=stride):
+            w = IntermediateRepresentation(
+                num_qubits=ir.num_qubits, gates=list(ir.gates[s:e]), name=f"{ir.name}[{s}:{e}]"
+            )
+            o = rs.resynthesize_outcome(w, timeout_s=timeout_s)
+            label = None if o.optimality in ("timeout", "not_applicable") else int(o.reduced)
+            rows.append(WindowLabel(s, e, label, o.gates_saved, o.solve_s, o.optimality))
+        result.append((ir, rows))
+        if out_dir:
+            d = Path(out_dir); d.mkdir(parents=True, exist_ok=True)
+            (d / f"{ir.name}.json").write_text(json.dumps(
+                {"name": ir.name, "qasm": ir.to_qasm2(), "windows": [asdict(r) for r in rows]},
+                indent=2), encoding="utf-8")
+    return result
+
+
+def load_resynth_labels(path) -> list[LabelledWindows]:
+    p = Path(path)
+    files = sorted(p.glob("*.json")) if p.is_dir() else [p]
+    out = []
+    for f in files:
+        d = json.loads(f.read_text(encoding="utf-8"))
+        ir = from_qasm2(d["qasm"]); ir.name = d.get("name", ir.name)
+        out.append((ir, [WindowLabel(**w) for w in d["windows"]]))
+    return out
