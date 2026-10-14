@@ -23,6 +23,7 @@ from qco.modules.gnn_cancellation.eval import (
     fit_temperature,
     held_out_split,
     metrics_from_counts,
+    rule_window_scorer,
     sigmoid,
 )
 from qco.modules.gnn_cancellation.features import (
@@ -90,6 +91,11 @@ class WindowFitResult:
     losses: list[float]
     temperature: float
     n_val_windows: int
+
+@dataclass(slots=True)
+class RankedCandidates:
+    pairs: list[CancellationCandidate]                # best first: what _block_variants drops
+    windows: list[tuple[tuple[int, int], float]]      # ((start, end), score), best first
 
 
 def _require_torch() -> None:
@@ -231,6 +237,7 @@ class GNNCancellationPredictor:
         self._threshold = 0.5
         self._temperature = 1.0  # window-head calibration (#28)
         self._rule_cache: dict = {}
+        self._window_trained = False
 
     def fit(
         self,
@@ -257,6 +264,7 @@ class GNNCancellationPredictor:
             train, val = labelled, labelled
 
         net = CancellationGNN(self.config)
+        self._window_trained = False
         net.train()
         opt = torch.optim.Adam(net.parameters(), lr=self.config.lr)
         self._net = net
@@ -269,8 +277,10 @@ class GNNCancellationPredictor:
             steps = 0
             for idx in order:
                 ir, gold = train[idx]
+                gold_keys = {(c.a, c.b) for c in gold}
+                unknown = [c for c in rule_based_candidates(ir) if (c.a, c.b) not in gold_keys]
                 pairs, labels = sample_training_pairs(
-                    ir, gold, negative_ratio=negative_ratio, rng=rng
+                    ir, gold, negative_ratio=negative_ratio, rng=rng, exclude=unknown
                 )
                 if not pairs:
                     continue
@@ -361,6 +371,7 @@ class GNNCancellationPredictor:
             z += self.window_logits(ir, [(r.start, r.end) for r in rows])
             y_val += [int(r.label) for r in rows]
         self._temperature = fit_temperature(z, y_val)
+        self._window_trained = True
         return WindowFitResult(losses, self._temperature, len(y_val))
 
     def window_logits(self, ir: IntermediateRepresentation, windows) -> list[float]:
@@ -385,6 +396,31 @@ class GNNCancellationPredictor:
         windows = list(windows)
         ranked = sorted(zip(windows, self.score_windows(ir, windows)), key=lambda t: -t[1])
         return ranked[:top_k] if top_k else ranked
+    @property
+    def has_window_head(self) -> bool:
+        return self._window_trained
+
+    def set_threshold(self, t: float) -> None:
+        self._threshold = float(t)
+
+    def rank_candidates(self, ir, windows=None, *, threshold=None, top_k=None,
+                        include_rules=True) -> RankedCandidates:
+        """What the pipeline applies: pairs best-first, windows best-first by calibrated P(reducible)."""
+        pairs = self.predict(ir, threshold)
+        if include_rules and self._net is not None:  # trained GNN never loses a rule-proven pair
+            seen = {(c.a, c.b) for c in pairs}
+            pairs = sorted(
+                pairs + [c for c in rule_based_candidates(ir) if (c.a, c.b) not in seen],
+                key=lambda c: -c.score,
+            )
+        ranked = []
+        if windows:
+            windows = list(windows)
+            if self._window_trained:
+                ranked = self.rank_windows(ir, windows, top_k)
+            else:  # rule evidence counts, not probabilities
+                ranked = sorted(zip(windows, rule_window_scorer(ir, windows)), key=lambda t: -t[1])[:top_k]
+        return RankedCandidates(pairs, ranked)
 
     # -- persistence ---------------------------------------------------------
 
@@ -402,6 +438,7 @@ class GNNCancellationPredictor:
                 "threshold": self._threshold,
                 "temperature": self._temperature,
                 "feature_dim": FEATURE_DIM,
+                "window_head": self._window_trained,
             },
             dest,
         )
@@ -425,6 +462,9 @@ class GNNCancellationPredictor:
         )
         if bad:
             raise ValueError(f"checkpoint mismatch: {bad}")
+        self._window_trained = bool(blob.get("window_head", False)) and not any(
+            k.startswith("window_scorer") for k in res.missing_keys
+        )
         net.eval()
         self._net = net
         self._threshold = float(blob.get("threshold", 0.5))
@@ -462,8 +502,10 @@ class GNNCancellationPredictor:
     def _rules(self, ir):
         if not self.config.rule_features:
             return []
-        key = (ir.name, len(ir.gates))
+        key = tuple((g.name, g.qubits, tuple(g.params or ())) for g in ir.gates)
         if key not in self._rule_cache:
+            if len(self._rule_cache) > 256:
+                self._rule_cache.clear()
             self._rule_cache[key] = rule_based_candidates(ir)
         return self._rule_cache[key]
 

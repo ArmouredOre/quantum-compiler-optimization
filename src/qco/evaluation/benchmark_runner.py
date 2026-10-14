@@ -275,6 +275,9 @@ def main(argv: list[str] | None = None) -> str:
     ap.add_argument("--window-max-qubits", type=int, default=6,
                     help="window-selection runs only on circuits this small ('exhaustive' has no budget)")
     ap.add_argument("--skip", nargs="*", default=[], choices=["baselines", "ablations", "windows"])
+    ap.add_argument("--gnn-checkpoint", default="auto",
+                type=lambda s: None if s.lower() == "none" else s,
+                help="'none' = rule-based fallback, 'auto' = checkpoints/module_b.pt if present, or a path")
     args = ap.parse_args(argv)
 
     def bench(opt, label, max_qubits=args.max_qubits):
@@ -289,8 +292,8 @@ def main(argv: list[str] | None = None) -> str:
         return run_benchmarks(logged, args.suite, args.calibration, max_qubits=max_qubits)
 
     def qco(**cfg):
-        return pipeline_optimizer(solver_budget_s=args.budget, calibration=args.calibration, **cfg)
-
+        return pipeline_optimizer(solver_budget_s=args.budget, calibration=args.calibration,
+                                    gnn_checkpoint=args.gnn_checkpoint, **cfg)
     os.makedirs(args.out, exist_ok=True)
     sections = [f"# qco evaluation\n\nCalibration `{args.calibration}`, solver budget {args.budget}s/circuit. "
                 "CX-cost = multi-qubit gates in CX-equivalents (basis-independent; tools emit different gate sets)."]

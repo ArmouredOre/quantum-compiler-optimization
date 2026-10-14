@@ -7,8 +7,10 @@ Novelty wiring (#31, docs/novelty_plan.md):
   arbitrarily wide circuits are verified densely; phase-polynomial / explicit
   ``unverified`` results come from ``EquivalenceChecker`` beyond that.
   Unverifiable rewrites are rejected, never silently accepted.
-* N1 - blocks are carved into re-synthesis-sized windows, ranked by GNN
-  candidate score, and re-synthesized best-first until ``solver_budget_s``.
+* N1 - blocks are carved into re-synthesis-sized windows, ranked by the GNN
+  window head's calibrated P(reducible) (#34; summed pair scores when no
+  trained checkpoint is loaded), and re-synthesized best-first until
+  ``solver_budget_s``.
 * N3 - each block's verified variants go to ``NSGA2Compiler.evolve(...,
   block_variants=...)``; the front is equivalent by construction.
 * N4 - reward uses ``PipelineConfig.calibration``; the feedback loop stops once
@@ -22,7 +24,10 @@ from __future__ import annotations
 import math
 import random
 import time
+import warnings
 from dataclasses import dataclass, field
+from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 from qco.evaluation.metrics import scalarized_reward
@@ -35,6 +40,9 @@ from qco.modules.gnn_cancellation.model import GNNCancellationPredictor
 from qco.modules.rl_scheduler.agent import RLScheduler
 from qco.modules.smt_verifier.bounded_optimizer import BoundedResynthesizer, ResynthConfig
 from qco.modules.smt_verifier.equivalence import EquivalenceChecker, EquivalenceResult
+
+# Assumes this file is src/qco/pipeline.py; adjust to wherever the checkpoint is committed.
+DEFAULT_CHECKPOINT = Path(__file__).resolve().parents[2] / "checkpoints" / "module_b.pt"
 
 
 @dataclass(slots=True)
@@ -66,6 +74,9 @@ class PipelineConfig:
     use_ea: bool = True
     # N1 window selection: "gnn" | "rule" | "random" | "exhaustive" (no budget).
     window_ranking: str = "gnn"
+    # #34: "auto" = DEFAULT_CHECKPOINT if present (else rule-based); None = rule-based
+    # fallback; any other string = explicit checkpoint path (errors are raised, never hidden).
+    gnn_checkpoint: str | None = "auto"
 
 
 @dataclass(slots=True)
@@ -129,12 +140,58 @@ def _compact(
     return remap(a), remap(b)
 
 
+def _idx(c) -> tuple[int, ...]:
+    """Gate indices a candidate touches; GNN-built inverse pairs carry () so fall back to (a, b)."""
+    idx = tuple(c.gate_indices or ())
+    return idx if idx else (c.a, c.b)
+
+
+def _with_indices(c):
+    """``c`` itself if it has gate_indices, else a duck-typed copy that does (for apply_cancellations)."""
+    if c.gate_indices:
+        return c
+    return SimpleNamespace(a=c.a, b=c.b, kind=c.kind, score=c.score, gate_indices=_idx(c))
+
+
+def _load_gnn(spec: str | None) -> GNNCancellationPredictor:
+    """Trained predictor from a checkpoint, or the untrained (rule-based) one."""
+    if spec is None:
+        return GNNCancellationPredictor()
+    path = DEFAULT_CHECKPOINT if spec == "auto" else Path(spec)
+    if spec == "auto" and not path.exists():
+        return GNNCancellationPredictor()
+    try:
+        return GNNCancellationPredictor().load(path)
+    except Exception as exc:
+        if spec != "auto":
+            raise
+        warnings.warn(
+            f"GNN checkpoint {path} unusable ({exc!r}); using rule-based candidates",
+            stacklevel=2,
+        )
+        return GNNCancellationPredictor()
+
+
+def _window_spans(ir: IntermediateRepresentation, windows) -> list[tuple[int, int]] | None:
+    """(start, end) of each window in ir.gates if the windows tile ir in order, else None."""
+    if any(len(w.ir) == 0 for w in windows):
+        return None
+    key = lambda gs: [(g.name, g.qubits, g.params) for g in gs]  # noqa: E731
+    if key([g for w in windows for g in w.ir.gates]) != key(ir.gates):
+        return None
+    spans, s = [], 0
+    for w in windows:
+        spans.append((s, s + len(w.ir)))
+        s += len(w.ir)
+    return spans
+
+
 class HybridOptimizer:
     def __init__(self, config: PipelineConfig | None = None):
         self.config = config or PipelineConfig()
         self.rl = RLScheduler()
         self.rl.config.calibration = self.config.calibration
-        self.gnn = GNNCancellationPredictor()
+        self.gnn = _load_gnn(self.config.gnn_checkpoint)
         self.checker = EquivalenceChecker()
         self.cheap_checker = EquivalenceChecker(backend="numeric")
         self.resynthesizer = BoundedResynthesizer(self.config.resynth_config)
@@ -212,18 +269,31 @@ class HybridOptimizer:
             variants.append(scheduled)
         base = variants[-1]
 
-        # Module B: apply non-overlapping cancellations / rotation merges, gated by confidence (N5).
-        candidate, applied = apply_cancellations(base, self.gnn.predict(base) if self.config.use_gnn else [])
-        if applied:
-            proven = {(c.kind, c.gate_indices) for c in rule_based_candidates(base)}
-            if not verify or all((c.kind, c.gate_indices) in proven for c in applied):
-                variants.append(candidate)
-            else:
-                confident = min(c.score for c in applied) >= self.config.confident_threshold
-                checker = self.cheap_checker if confident else self.checker
-                if self.revert_rewrite(original, candidate, None, block_idx,
-                                       "module_b_cancellation", checker)[1]:
-                    variants.append(candidate)
+        # Module B (N5): rule-proven rewrites first - no check needed, exactly the rule-based
+        # fallback's behaviour. GNN extras go on top and are verified, so they can only help.
+        if self.config.use_gnn:
+            all_rules = rule_based_candidates(base)
+            proven = {(c.kind, _idx(c)) for c in all_rules}
+            rules = [_with_indices(c) for c in sorted(
+                (c for c in all_rules if c.score >= 0.5), key=lambda c: -c.score)]
+            safe_ir, safe = apply_cancellations(base, rules)
+            if safe:
+                variants.append(safe_ir)
+            extras = [_with_indices(c)
+                      for c in self.gnn.rank_candidates(base, include_rules=False).pairs
+                      if (c.kind, _idx(c)) not in proven]
+            if extras:
+                candidate, applied = apply_cancellations(base, rules + extras)
+                new = [c for c in applied if (c.kind, _idx(c)) not in proven]
+                if new:
+                    if not verify:
+                        variants.append(candidate)
+                    else:
+                        confident = min(c.score for c in new) >= self.config.confident_threshold
+                        checker = self.cheap_checker if confident else self.checker
+                        if self.revert_rewrite(original, candidate, None, block_idx,
+                                               "module_b_cancellation", checker)[1]:
+                            variants.append(candidate)
 
         # N1: exact re-synthesis on GNN-ranked windows, under the solver budget.
         resynth = self._resynthesize_windows(min(variants, key=len), block_idx)
@@ -239,7 +309,7 @@ class HybridOptimizer:
             return None
         rc = self.resynthesizer.config
         windows = partition_circuit(ir, max_block_gates=rc.max_gates, max_block_qubits=rc.max_qubits)
-        ranked = self._rank_windows(windows)
+        ranked = self._rank_windows(ir, windows)
         replaced: dict[int, IntermediateRepresentation] = {}
         for w in ranked:
             if self._solver_left <= 0:
@@ -265,19 +335,34 @@ class HybridOptimizer:
             out.gates.extend(replaced.get(w.index, w.ir).gates)
         return out
 
-    def _rank_windows(self, windows: list[Block]) -> list[Block]:
+    def _rank_windows(self, ir: IntermediateRepresentation, windows: list[Block]) -> list[Block]:
         """Order windows for re-synthesis (N1); ties broken by size."""
         mode = self.config.window_ranking
         if mode == "random":
             return random.Random(len(windows)).sample(windows, len(windows))
         if mode == "exhaustive":
             return windows
+        if mode == "gnn" and self.gnn.has_window_head:
+            # #34: calibrated P(reducible) from the window head.
+            spans = _window_spans(ir, windows)
+            if spans is not None:  # full-circuit context, as in training
+                probs = self.gnn.score_windows(ir, spans)
+            else:
+                probs = [
+                    self.gnn.score_windows(w.ir, [(0, len(w.ir))])[0] if len(w.ir) else 0.0
+                    for w in windows
+                ]
+                # #28 out-of-fold results: rule evidence + GNN tie-break beat either alone
+                # (and the head alone is worse on unseen families), so rules rank, GNN breaks ties.
+            rule = [sum(c.score for c in rule_based_candidates(w.ir)) for w in windows]
+            order = sorted(range(len(windows)),
+                           key=lambda i: (-rule[i], -probs[i], -len(windows[i].ir)))
+            return [windows[i] for i in order]
         if mode == "rule":
-            score = lambda w: sum(c.score for c in rule_based_candidates(w.ir))
+            score = lambda w: sum(c.score for c in rule_based_candidates(w.ir))  # noqa: E731
         elif mode == "gnn":
-            # ponytail: summed GNN candidate scores (rule-based until #28's
-            # window-level head lands); swap in the pooled head then.
-            score = lambda w: sum(c.score for c in self.gnn.predict(w.ir, threshold=0.0))
+            # No trained window head: summed pair scores (rule-based when untrained).
+            score = lambda w: sum(c.score for c in self.gnn.predict(w.ir, threshold=0.0))  # noqa: E731
         else:
             raise ValueError(f"unknown window_ranking {mode!r}")
         return sorted(windows, key=lambda w: (-score(w), -len(w.ir)))
@@ -355,4 +440,3 @@ class HybridOptimizer:
 
 def optimize(source, config: PipelineConfig | None = None) -> PipelineResult:
     return HybridOptimizer(config).run(source)
-
