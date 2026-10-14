@@ -271,12 +271,24 @@ def test_one_command_builds_every_table(tmp_path):
     (suite / "hcxh.qasm").write_text(c.to_qasm2())
     suite = str(suite)
     out = tmp_path / "results"
-    summary = main(["--suite", suite, "--out", str(out), "--budget", "0.5", "--window-max-qubits", "4"])
+    summary = main(["--suite", suite, "--out", str(out), "--budget", "0.5", "--window-max-qubits", "4",
+                    "--gnn-checkpoint", "none"])
+    assert "Module B ran as the rule-based stand-in" in summary  # no --gnn-model given
     for title in ("qco vs baselines", "Ablations", "N1 window selection"):
         assert title in summary
     for row in ("minus A (RL)", "minus D (NSGA-II)", "exhaustive", "| qco |"):
         assert row in summary
     assert (out / "summary.md").exists() and (out / "qco.csv").exists()
+    # #40: Pareto front per circuit (CSV always; PNG when matplotlib is installed)
+    assert "Pareto fronts" in summary
+    rows = list(csv.DictReader(open(out / "pareto" / "hcxh.csv")))
+    assert {r["source"] for r in rows} >= {"input", "qco"}
+    assert min(int(r["gate_count"]) for r in rows if r["source"] == "qco") < 6
+    try:
+        import matplotlib  # noqa: F401
+    except ImportError:
+        return
+    assert (out / "pareto" / "hcxh.png").stat().st_size > 0
 
 
 def test_tool_crash_becomes_unsupported_row():
