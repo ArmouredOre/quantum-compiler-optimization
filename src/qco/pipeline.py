@@ -67,6 +67,9 @@ class PipelineConfig:
     calibration: str = "default"     # N4: device profile for reward + RL (qco.evaluation.calibration)
     solver_budget_s: float = 5.0     # N1: total exact re-synthesis time per run
     confident_threshold: float = 0.9 # N5: GNN score above which a numeric check suffices
+    # N5 measurement: False = every Module B rewrite goes through the full checker
+    # (no rule-proven skip, no cheap check for confident candidates).
+    confidence_gating: bool = True
     # Ablations (#32): switch Modules A / B / D off; Module C off = enable_resynthesis
     # and verify_rewrites both False.
     use_rl: bool = True
@@ -109,6 +112,10 @@ class PipelineResult:
     unverified_blocks: int = 0       # blocks where a rewrite was rejected as unverifiable
     solver_time_s: float = 0.0       # exact re-synthesis time actually spent (N1)
     reward_history: list[float] = field(default_factory=list)
+    # N5 cost accounting (Stage 4 + window checks; the final stitch / front checks excluded)
+    verification_calls: int = 0
+    verification_s: float = 0.0
+    verifications_skipped: int = 0   # rewrites accepted as rule-proven without a check
 
 
 def apply_cancellations(ir: IntermediateRepresentation, candidates) -> tuple[IntermediateRepresentation, list]:
@@ -221,9 +228,18 @@ class HybridOptimizer:
         self._solver_left = self.config.solver_budget_s
         self._solver_spent = 0.0
         self._unverified: set[int] = set()
+        self._reset_verify_stats()
+
+    def _reset_verify_stats(self) -> None:
+        self._verify_calls, self._verify_s, self._verify_skipped = 0, 0.0, 0
 
     def _check(self, original, rewrite, checker: EquivalenceChecker | None = None) -> EquivalenceResult:
-        return (checker or self.checker).check(*_compact(original, rewrite))
+        t0 = time.perf_counter()
+        try:
+            return (checker or self.checker).check(*_compact(original, rewrite))
+        finally:
+            self._verify_calls += 1
+            self._verify_s += time.perf_counter() - t0
 
     def revert_rewrite(
         self,
@@ -299,7 +315,13 @@ class HybridOptimizer:
                 (c for c in all_rules if c.score >= 0.5), key=lambda c: -c.score)]
             safe_ir, safe = apply_cancellations(base, rules)
             if safe:
-                variants.append(safe_ir)
+                if not verify:
+                    variants.append(safe_ir)
+                elif self.config.confidence_gating:
+                    variants.append(safe_ir)
+                    self._verify_skipped += 1
+                elif self.revert_rewrite(original, safe_ir, None, block_idx, "module_b_rules")[1]:
+                    variants.append(safe_ir)
             extras = [_with_indices(c)
                       for c in self.gnn.rank_candidates(base, include_rules=False).pairs
                       if (c.kind, _idx(c)) not in proven]
@@ -311,7 +333,8 @@ class HybridOptimizer:
                         variants.append(candidate)
                     else:
                         confident = min(c.score for c in new) >= self.config.confident_threshold
-                        checker = self.cheap_checker if confident else self.checker
+                        cheap = confident and self.config.confidence_gating
+                        checker = self.cheap_checker if cheap else self.checker
                         if self.revert_rewrite(original, candidate, None, block_idx,
                                                "module_b_cancellation", checker)[1]:
                             variants.append(candidate)
@@ -404,6 +427,7 @@ class HybridOptimizer:
         exhaustive = self.config.window_ranking == "exhaustive"
         self._solver_left = math.inf if exhaustive else self.config.solver_budget_s
         self._solver_spent = 0.0
+        self._reset_verify_stats()
         verified = True
         rewards: list[float] = []
         variants: list[list[IntermediateRepresentation]] = []
@@ -466,6 +490,9 @@ class HybridOptimizer:
             unverified_blocks=len(self._unverified),
             solver_time_s=self._solver_spent,
             reward_history=rewards,
+            verification_calls=self._verify_calls,
+            verification_s=self._verify_s,
+            verifications_skipped=self._verify_skipped,
         )
 
 

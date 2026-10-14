@@ -326,3 +326,19 @@ def test_pipeline_loads_trained_gnn(tmp_path):
     assert opt.gnn._net is not None
     res = opt.run(ir)
     assert all(EquivalenceChecker().check(ir, p.circuit).equivalent for p in res.pareto_front)
+
+
+# --- N5: confidence-gated verification is measurable ------------------------------
+
+def test_confidence_gating_skips_rule_proven_checks_at_equal_correctness():
+    ir = parse("benchmarks/circuits/grover_w3_i2.qasm")
+    cfg = dict(solver_budget_s=0.0, use_ea=False, gnn_checkpoint=None)
+    on = optimize(ir, PipelineConfig(confidence_gating=True, **cfg))
+    off = optimize(ir, PipelineConfig(confidence_gating=False, **cfg))
+    assert on.verifications_skipped > 0 and off.verifications_skipped == 0
+    assert off.verification_calls > on.verification_calls
+    assert on.verified and off.verified and on.unverified_blocks == off.unverified_blocks == 0
+    checker = EquivalenceChecker()
+    for res in (on, off):
+        assert checker.check(ir, res.pareto_front[0].circuit).equivalent
+    assert on.pareto_front[0].circuit.gate_count() == off.pareto_front[0].circuit.gate_count()
