@@ -21,42 +21,38 @@ LabelledCircuit = tuple[IntermediateRepresentation, list[CancellationCandidate]]
 LABEL_SOURCES = ("rule", "verified")
 
 
-def verify_labels(
-    ir: IntermediateRepresentation,
-    candidates: Sequence[CancellationCandidate],
-    *,
-    checker: Any | None = None,
-    backend: str = "auto",
-) -> list[bool | None]:
-    """Verified status per candidate: True / False, or None if unknown.
+def _segment(ir, c):
+    """Gates a..b of ``ir`` compacted to their active qubits, plus ``c`` shifted to match."""
+    idx = tuple(c.gate_indices or ()) or (c.a, c.b)
+    lo, hi = min(idx), max(idx)
+    seg = ir.gates[lo:hi + 1]
+    active = sorted({q for g in seg for q in g.qubits})
+    m = {q: i for i, q in enumerate(active)}
+    gates = [type(g)(g.name, tuple(m[q] for q in g.qubits), g.params, g.tag) for g in seg]
+    shifted = type(c)(c.a - lo, c.b - lo, c.kind, c.score, tuple(i - lo for i in idx))
+    return IntermediateRepresentation(max(len(active), 1), gates, ir.name), shifted
 
-    ``None`` means the checker crashed on that candidate (it reports
-    ``method == "error"``). That is not the same as "not equivalent", so
-    callers must never train on it.
+
+def verify_labels(ir, candidates, *, checker=None, backend="auto") -> list[bool | None]:
+    """Verified status per candidate on its compacted segment: True / False, or None if unknown.
+
+    ``None`` = checker error or ``unverified`` (segment too wide). Never train on it.
     """
     if not candidates:
         return []
-    # Lazy import: keeps Module B importable without the verifier loaded.
     from qco.modules.smt_verifier.equivalence import verify_candidates_detailed
 
-    try:
-        results = verify_candidates_detailed(
-            ir, list(candidates), checker=checker, backend=backend
-        )
-    except Exception as exc:
-        warnings.warn(
-            f"verification failed on {ir.name!r}: {exc!r}; labels unknown",
-            stacklevel=2,
-        )
-        return [None] * len(candidates)
-    if len(results) != len(candidates):
-        warnings.warn(
-            f"verifier returned {len(results)} results for {len(candidates)} "
-            f"candidates on {ir.name!r}; labels unknown",
-            stacklevel=2,
-        )
-        return [None] * len(candidates)
-    return [None if res.method == "error" else bool(res.equivalent) for _, res in results]
+    out: list[bool | None] = []
+    for c in candidates:
+        try:
+            seg, sc = _segment(ir, c)
+            ((_, res),) = verify_candidates_detailed(seg, [sc], checker=checker, backend=backend)
+        except Exception as exc:
+            warnings.warn(f"verification failed on {ir.name!r}: {exc!r}; label unknown", stacklevel=2)
+            out.append(None)
+            continue
+        out.append(None if res.method in ("error", "unverified") else bool(res.equivalent))
+    return out
 
 def candidates_to_records(
     ir: IntermediateRepresentation,
@@ -215,17 +211,14 @@ def load_training_dataset(dataset: Any) -> list[LabelledCircuit]:
 
 
 def sample_training_pairs(
-    ir: IntermediateRepresentation,
-    positives: Sequence[CancellationCandidate],
-    *,
-    negative_ratio: int = 4,
-    rng: random.Random | None = None,
-) -> tuple[list[tuple[int, int]], list[float]]:
-    """Positive rule pairs plus sampled overlapping-support negatives."""
+    ir, positives, *, negative_ratio: int = 4, rng: random.Random | None = None,
+    exclude: Sequence[CancellationCandidate] = (),
+):
     rng = rng or random.Random(0)
     pos = {(c.a, c.b) for c in positives}
+    skip = {(c.a, c.b) for c in exclude}
     pool = overlapping_gate_pairs(ir)
-    neg = [p for p in pool if p not in pos]
+    neg = [p for p in pool if p not in pos and p not in skip]
     rng.shuffle(neg)
     if pos:
         neg = neg[: max(len(pos) * negative_ratio, 1)]
@@ -245,3 +238,73 @@ def _labelled_qasm(path: Path) -> LabelledCircuit:
     ir = from_qasm2(path.read_text(encoding="utf-8"))
     ir.name = path.stem
     return ir, rule_based_candidates(ir)
+
+from dataclasses import asdict, dataclass
+
+@dataclass(slots=True)
+class WindowLabel:
+    start: int            # gate index, inclusive
+    end: int              # gate index, exclusive
+    label: int | None     # 1 = re-synthesis shrinks it, 0 = no reduction found, None = unknown
+    gates_saved: int
+    solve_s: float
+    status: str
+
+LabelledWindows = tuple[IntermediateRepresentation, list[WindowLabel]]
+
+
+def extract_windows(ir, *, max_qubits=3, max_gates=6, min_gates=2, stride=None):
+    """Contiguous gate slices [s, e) with <= max_qubits active qubits and <= max_gates gates."""
+    n, stride = len(ir.gates), stride or max(1, max_gates // 2)
+    out = []
+    for s in range(0, n, stride):
+        qs, e = set(), s
+        while e < n and e - s < max_gates:
+            nq = qs | set(ir.gates[e].qubits)
+            if len(nq) > max_qubits:
+                break
+            qs, e = nq, e + 1
+        if e - s >= min_gates:
+            out.append((s, e))
+    return list(dict.fromkeys(out))
+
+
+def dump_resynth_labels(
+    circuits, out_dir=None, *, resynthesizer=None, timeout_s=2.0,
+    max_qubits=3, max_gates=6, stride=None,
+) -> list[LabelledWindows]:
+    """Label windows with exact re-synthesis outcomes (#27). Rule labels stay available as baseline."""
+    from qco.modules.smt_verifier.bounded_optimizer import BoundedResynthesizer, ResynthConfig
+
+    # One shared instance so the canonical-window cache actually works.
+    rs = resynthesizer or BoundedResynthesizer(
+        ResynthConfig(max_qubits=max_qubits, max_gates=max_gates, timeout_s=timeout_s)
+    )
+    result = []
+    for ir in circuits:
+        rows = []
+        for s, e in extract_windows(ir, max_qubits=max_qubits, max_gates=max_gates, stride=stride):
+            w = IntermediateRepresentation(
+                num_qubits=ir.num_qubits, gates=list(ir.gates[s:e]), name=f"{ir.name}[{s}:{e}]"
+            )
+            o = rs.resynthesize_outcome(w, timeout_s=timeout_s)
+            label = None if o.optimality in ("timeout", "not_applicable") else int(o.reduced)
+            rows.append(WindowLabel(s, e, label, o.gates_saved, o.solve_s, o.optimality))
+        result.append((ir, rows))
+        if out_dir:
+            d = Path(out_dir); d.mkdir(parents=True, exist_ok=True)
+            (d / f"{ir.name}.json").write_text(json.dumps(
+                {"name": ir.name, "qasm": ir.to_qasm2(), "windows": [asdict(r) for r in rows]},
+                indent=2), encoding="utf-8")
+    return result
+
+
+def load_resynth_labels(path) -> list[LabelledWindows]:
+    p = Path(path)
+    files = sorted(p.glob("*.json")) if p.is_dir() else [p]
+    out = []
+    for f in files:
+        d = json.loads(f.read_text(encoding="utf-8"))
+        ir = from_qasm2(d["qasm"]); ir.name = d.get("name", ir.name)
+        out.append((ir, [WindowLabel(**w) for w in d["windows"]]))
+    return out

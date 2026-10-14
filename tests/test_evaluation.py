@@ -271,7 +271,8 @@ def test_one_command_builds_every_table(tmp_path):
     (suite / "hcxh.qasm").write_text(c.to_qasm2())
     suite = str(suite)
     out = tmp_path / "results"
-    summary = main(["--suite", suite, "--out", str(out), "--budget", "0.5", "--window-max-qubits", "4"])
+    summary = main(["--suite", suite, "--out", str(out), "--budget", "0.5", "--window-max-qubits", "4",
+                    "--gnn-checkpoint", "none"])
     assert "Module B ran as the rule-based stand-in" in summary  # no --gnn-model given
     for title in ("qco vs baselines", "Ablations", "N1 window selection"):
         assert title in summary

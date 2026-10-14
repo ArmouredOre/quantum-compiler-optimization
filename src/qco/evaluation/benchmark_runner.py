@@ -372,12 +372,20 @@ def main(argv: list[str] | None = None) -> str:
     ap.add_argument("--skip", nargs="*", default=[], choices=["baselines", "ablations", "windows"])
     ap.add_argument("--rl-policy", default=DEFAULT_RL_POLICY if os.path.exists(DEFAULT_RL_POLICY) else "none",
                     help="trained Module A policy ('none' = untrained greedy stand-in)")
-    ap.add_argument("--gnn-model", default="none", help="trained Module B checkpoint ('none' = rule-based)")
+    ap.add_argument("--gnn-checkpoint", default="auto",
+                type=lambda s: None if s.lower() == "none" else s,
+                help="'none' = rule-based fallback, 'auto' = checkpoints/module_b.pt if present, or a path")
     args = ap.parse_args(argv)
     trained = {
         "rl_policy_path": None if args.rl_policy == "none" else args.rl_policy,
-        "gnn_model_path": None if args.gnn_model == "none" else args.gnn_model,
+        "gnn_checkpoint": args.gnn_checkpoint,
     }
+    from qco.pipeline import DEFAULT_CHECKPOINT, _load_gnn
+
+    # "auto" silently falls back to rules (no checkpoint / no torch): ask the loader, not the flag.
+    gnn_trained = _load_gnn(args.gnn_checkpoint)._net is not None
+    gnn_shown = (_shown(str(DEFAULT_CHECKPOINT)) if args.gnn_checkpoint == "auto" else _shown(args.gnn_checkpoint)) \
+        if gnn_trained else "none (rule-based)"
 
     def bench(opt, label, max_qubits=args.max_qubits):
         def logged(ir):  # progress to stderr: full runs take tens of minutes
@@ -391,16 +399,17 @@ def main(argv: list[str] | None = None) -> str:
         return run_benchmarks(logged, args.suite, args.calibration, max_qubits=max_qubits)
 
     def qco(fronts=None, **cfg):
-        return pipeline_optimizer(fronts=fronts, solver_budget_s=args.budget, calibration=args.calibration, **trained, **cfg)
+        return pipeline_optimizer(fronts=fronts, solver_budget_s=args.budget, calibration=args.calibration,
+                                  **trained, **cfg)
 
     os.makedirs(args.out, exist_ok=True)
     sections = [f"# qco evaluation\n\nCalibration `{args.calibration}`, solver budget {args.budget}s/circuit, "
-                f"RL policy `{_shown(args.rl_policy)}`, GNN model `{_shown(args.gnn_model)}`. "
+                f"RL policy `{_shown(args.rl_policy)}`, GNN checkpoint `{gnn_shown}`. "
                 "CX-cost = multi-qubit gates in CX-equivalents (basis-independent; tools emit different gate sets)."
                 + "".join(f"\n\n> **Provisional:** {note}" for note in (
                     "Module A ran as the untrained greedy stand-in (no RL policy)." if args.rl_policy == "none" else "",
                     "Module B ran as the rule-based stand-in (no trained GNN), so 'gnn' rows = rule-based."
-                    if args.gnn_model == "none" else "",
+                    if not gnn_trained else "",
                 ) if note)]
     all_reports: dict[str, BenchmarkReport] = {}
 

@@ -385,3 +385,16 @@ def test_train_val_test_split_disjoint():
     train, val, test = train_val_test_split(list(range(20)), seed=1)
     assert set(train).isdisjoint(val) and set(train).isdisjoint(test) and set(val).isdisjoint(test)
     assert sorted(train + val + test) == list(range(20))
+
+
+def test_controlled_rotations_use_4pi_period():
+    two_pi = IntermediateRepresentation(2)
+    two_pi.add("crz", [0, 1], [math.pi]).add("crz", [0, 1], [math.pi])
+    assert rule_based_candidates(two_pi) == [] or all(
+        c.kind == "rotation_merge" for c in rule_based_candidates(two_pi))
+    four_pi = IntermediateRepresentation(2)
+    four_pi.add("crz", [0, 1], [2 * math.pi]).add("crz", [0, 1], [2 * math.pi])
+    assert any(c.kind == "identity_chain" for c in rule_based_candidates(four_pi))
+    plain = IntermediateRepresentation(1)
+    plain.add("rz", [0], [math.pi]).add("rz", [0], [math.pi])   # rz(2*pi) = -I: global phase
+    assert any(c.kind == "identity_chain" for c in rule_based_candidates(plain))

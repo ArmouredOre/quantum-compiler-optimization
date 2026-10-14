@@ -27,7 +27,8 @@ htmlcov/
 # Project artifacts
 *.log
 runs/
-checkpoints/
+checkpoints/*
+!checkpoints/module_b.pt
 results/
 wandb/
 

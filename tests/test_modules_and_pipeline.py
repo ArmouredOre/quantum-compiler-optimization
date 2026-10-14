@@ -17,7 +17,7 @@ from qco.modules.evolutionary.nsga2 import (
     structure_aware_fidelity_surrogate,
 )
 from qco.evaluation.metrics import gate_count_reduction, scalarized_reward
-from qco.pipeline import optimize
+from qco.pipeline import PipelineConfig, optimize
 
 
 def _hh_circuit():
@@ -256,6 +256,26 @@ def test_resynthesized_windows_are_stitched_back_in():
     assert EquivalenceChecker().check(c, best).equivalent
 
 
+def test_pipeline_merges_adjacent_rotations():
+    # Module B emits rotation_merge candidates; the pipeline used to apply only inverse pairs.
+    ir = IntermediateRepresentation(2, name="rz_rz")
+    ir.add("cx", [0, 1]).add("rz", [1], [0.3]).add("rz", [1], [0.4]).add("cx", [0, 1])
+    res = optimize(ir, PipelineConfig(solver_budget_s=0.0))
+    best = min(res.pareto_front, key=lambda p: p.objective.as_tuple()).circuit
+    rz = [g for g in best.gates if g.name == "rz"]
+    assert len(rz) == 1 and rz[0].params[0] == pytest.approx(0.7)
+    assert EquivalenceChecker(backend="numeric").check(ir, best).equivalent
+
+
+def test_controlled_rotation_pi_pair_is_not_cancelled():
+    # crz(pi)·crz(pi) = controlled(-I) = Z on the control, not the identity (period 4*pi).
+    ir = IntermediateRepresentation(2, name="crz_pi")
+    ir.add("h", [0]).add("crz", [0, 1], [math.pi]).add("crz", [0, 1], [math.pi]).add("h", [1])
+    res = optimize(ir, PipelineConfig(solver_budget_s=0.0))
+    checker = EquivalenceChecker(backend="numeric")
+    assert all(checker.check(ir, p.circuit).equivalent for p in res.pareto_front)
+
+
 # --- #36: trained Stage-4 modules + reward hook ----------------------------------
 
 import os
@@ -302,7 +322,7 @@ def test_pipeline_loads_trained_gnn(tmp_path):
     path = model.save(tmp_path / "gnn.pt")
 
     ir = parse("benchmarks/circuits/grover_w3_i2.qasm")
-    opt = HybridOptimizer(PipelineConfig(gnn_model_path=str(path), solver_budget_s=0.5))
+    opt = HybridOptimizer(PipelineConfig(gnn_checkpoint=str(path), solver_budget_s=0.5))
     assert opt.gnn._net is not None
     res = opt.run(ir)
     assert all(EquivalenceChecker().check(ir, p.circuit).equivalent for p in res.pareto_front)
