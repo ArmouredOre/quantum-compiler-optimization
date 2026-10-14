@@ -118,3 +118,14 @@ def test_window_spans_on_real_partition_is_none_or_valid():
     if spans is not None:
         assert spans[0][0] == 0 and spans[-1][1] == len(ir.gates)
         assert all(a[1] == b[0] for a, b in zip(spans, spans[1:]))
+
+def test_window_order_is_rules_first():
+    from qco.ir.parser import from_qasm2
+    ir = from_qasm2('OPENQASM 2.0;\ninclude "qelib1.inc";\nqreg q[2];\n'
+                    'h q[0];\nt q[1];\nx q[0];\nx q[0];\n')
+    pred = GNNCancellationPredictor()
+    pred._window_trained = True
+    pred.score_windows = lambda ir_, w: [0.99 if s == 0 else 0.1 for s, _ in w]  # GNN prefers window A
+    order = [w for w, _ in pred.rank_windows_rule_first(ir, [(0, 2), (2, 4)])]
+    assert order == [(2, 4), (0, 2)]          # window B has the x-x rule candidate, so it wins
+    

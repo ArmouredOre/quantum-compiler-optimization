@@ -403,9 +403,27 @@ class GNNCancellationPredictor:
     def set_threshold(self, t: float) -> None:
         self._threshold = float(t)
 
+    def rank_windows_rule_first(self, ir, windows, top_k=None):
+        """Rule evidence first (integer count, same scorer as the eval); the calibrated GNN
+        probability only breaks ties. Returns [((start, end), score), ...], best first.
+        score = calibrated P(reducible) if the window head is trained, else the rule count."""
+        windows = list(windows)
+        if not windows:
+            return []
+        rule = rule_window_scorer(ir, windows)
+        if self._window_trained:
+            prob = self.score_windows(ir, windows)
+            order = sorted(range(len(windows)), key=lambda i: (-rule[i], -prob[i]))
+            ranked = [(windows[i], prob[i]) for i in order]
+        else:
+            order = sorted(range(len(windows)), key=lambda i: -rule[i])
+            ranked = [(windows[i], rule[i]) for i in order]
+        return ranked[:top_k] if top_k else ranked
+
     def rank_candidates(self, ir, windows=None, *, threshold=None, top_k=None,
                         include_rules=True) -> RankedCandidates:
-        """What the pipeline applies: pairs best-first, windows best-first by calibrated P(reducible)."""
+        """What the pipeline applies: pairs best-first (rule-proven pairs never lost), windows
+        ordered by rule evidence first with the calibrated GNN P(reducible) as tie-break."""
         pairs = self.predict(ir, threshold)
         if include_rules and self._net is not None:  # trained GNN never loses a rule-proven pair
             seen = {(c.a, c.b) for c in pairs}
@@ -413,13 +431,7 @@ class GNNCancellationPredictor:
                 pairs + [c for c in rule_based_candidates(ir) if (c.a, c.b) not in seen],
                 key=lambda c: -c.score,
             )
-        ranked = []
-        if windows:
-            windows = list(windows)
-            if self._window_trained:
-                ranked = self.rank_windows(ir, windows, top_k)
-            else:  # rule evidence counts, not probabilities
-                ranked = sorted(zip(windows, rule_window_scorer(ir, windows)), key=lambda t: -t[1])[:top_k]
+        ranked = self.rank_windows_rule_first(ir, windows, top_k) if windows else []
         return RankedCandidates(pairs, ranked)
 
     # -- persistence ---------------------------------------------------------

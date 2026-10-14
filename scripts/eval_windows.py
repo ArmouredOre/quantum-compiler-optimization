@@ -6,17 +6,23 @@ Two cross-validation modes, both with every window scored out-of-fold:
   * default: leave-one-family-out (all circuits of a family, e.g. grover_*, are held out together)
   * --no-family-folds: leave-workload-out (sibling circuits such as grover_w5_i1 / grover_w5_i2
     always share a fold, so near-duplicates cannot leak from train into test)
+
+#38 controls: a logistic-regression baseline on the same per-window hand features the GNN head
+receives (same folds), and AP stratified by rule-flagged vs unflagged windows.
 """
 import argparse, math, random, re, statistics as st
 from collections import Counter
 from pathlib import Path
+
+import numpy as np
 
 from qco.ir.parser import from_qasm2
 from qco.modules.gnn_cancellation.dataset import dump_resynth_labels, load_resynth_labels
 from qco.modules.gnn_cancellation.eval import (
     expected_calibration_error as ece, fit_temperature, plot_reliability,
     precision_at_k, rule_window_scorer, sigmoid, write_pr_table)
-from qco.modules.gnn_cancellation.model import GNNCancellationPredictor, GNNConfig
+from qco.modules.gnn_cancellation.features import rule_based_candidates
+from qco.modules.gnn_cancellation.model import GNNCancellationPredictor, GNNConfig, _window_extras
 
 ROOT = Path(__file__).resolve().parents[1]
 KS = (1, 3, 5)
@@ -73,6 +79,66 @@ def brier(probs, labels):
     return sum((p - y) ** 2 for p, y in zip(probs, labels)) / max(len(labels), 1)
 
 
+# ----------------------------------------------------------------------------- controls (NEW)
+def window_features(ir, spans, use_rules=True):
+    """The same per-window extras the GNN window head receives, one vector per (start, end).
+    NOTE: assumes model.py builds `cands` as rule_based_candidates(ir) on the whole circuit;
+    verify against model.py:~530 before trusting the LR-vs-GNN comparison."""
+    if not spans:
+        return []
+    cands = rule_based_candidates(ir)
+    return [list(map(float, _window_extras(ir, s, e, cands, use_rules))) for s, e in spans]
+
+
+def fit_lr(X, y, l2=1.0, iters=50):
+    """Ridge-penalised logistic regression via IRLS (numpy only). Features are standardised;
+    returns a predict(X) -> probabilities closure."""
+    X = np.asarray(X, dtype=float); y = np.asarray(y, dtype=float)
+    mu = X.mean(0); sd = X.std(0); sd[sd < 1e-9] = 1.0
+    Z = np.hstack([np.ones((len(X), 1)), (X - mu) / sd])
+    w = np.zeros(Z.shape[1])
+    reg = l2 * np.eye(Z.shape[1]); reg[0, 0] = 0.0          # bias unpenalised
+    for _ in range(iters):
+        p = 1.0 / (1.0 + np.exp(-np.clip(Z @ w, -30, 30)))
+        g = Z.T @ (p - y) + reg @ w
+        H = (Z * (p * (1 - p) + 1e-9)[:, None]).T @ Z + reg + 1e-9 * np.eye(Z.shape[1])
+        step = np.linalg.solve(H, g)
+        w -= step
+        if np.max(np.abs(step)) < 1e-8:
+            break
+
+    def predict(Xn):
+        Xn = np.asarray(Xn, dtype=float)
+        if Xn.size == 0:
+            return []
+        Zn = np.hstack([np.ones((len(Xn), 1)), (Xn - mu) / sd])
+        return list(1.0 / (1.0 + np.exp(-np.clip(Zn @ w, -30, 30))))
+    return predict
+
+
+def lr_oof_scores(data, feats, fold_of):
+    """Out-of-fold LR probabilities on the hand features, using the SAME folds as the GNN."""
+    out = {}
+    for f in sorted(set(fold_of.values())):
+        tr = [i for i in range(len(data)) if fold_of.get(i) != f]
+        X = [x for i in tr for x, r in zip(feats[i], data[i][1]) if r.label is not None]
+        y = [r.label for i in tr for r in data[i][1] if r.label is not None]
+        predict = fit_lr(X, y) if len(set(y)) > 1 else (lambda Xn: [float(np.mean(y)) if y else 0.0] * len(Xn))
+        for i in (j for j in fold_of if fold_of[j] == f):
+            out[i] = predict(feats[i]) if feats[i] else []
+    return [out[i] for i in range(len(data))]
+
+
+def stratified_ap(data, scores, rule_cnt, flagged, rng):
+    """AP restricted to windows with (flagged=True) / without (False) a rule candidate."""
+    s, y = [], []
+    for i, (_, rs) in enumerate(data):
+        for x, r, c in zip(scores[i], rs, rule_cnt[i]):
+            if r.label is not None and (c > 0) == flagged:
+                s.append(x); y.append(r.label)
+    return average_precision(s, y, rng) if sum(y) else float("nan")
+
+
 # ----------------------------------------------------------------------------- folds / CV
 def family(name):
     """grover_w5_i1 -> grover, rand_cnotpauli_n10 -> rand_cnotpauli"""
@@ -80,8 +146,9 @@ def family(name):
 
 
 def workload(name):
-    """grover_w5_i1 -> grover_w5 (strip the instance suffix so siblings stay together)."""
-    return re.sub(r"_i\d+$", "", name)
+    """grover_w5_i1 -> grover_w5; rand_cnotpauli_n5_s1234 -> rand_cnotpauli_n5
+    (strip instance / seed suffixes so siblings stay together)."""
+    return re.sub(r"(_(i|s)\d+)+$", "", name)
 
 
 def make_folds(data, k, seed, by_family=True):
@@ -261,6 +328,8 @@ def main():
             ir = from_qasm2(p.read_text(encoding="utf-8")); ir.name = p.stem; irs.append(ir)
         data = dump_resynth_labels(irs, a.labels_out, timeout_s=a.timeout,
                                    max_qubits=a.max_qubits, max_gates=a.max_gates)
+    if not data:
+        raise SystemExit(f"no circuits/labels found (circuits={a.circuits}, labels={a.labels_out})")
 
     if a.probe_timeouts:
         probe_timeouts(data, a.probe_timeouts, a.probe_timeout, a.max_qubits, a.max_gates)
@@ -289,15 +358,17 @@ def main():
         tot = sum(v for (l, _), v in by_len.items() if l == L)
         print(f"  len {L}: n={tot} reducible={by_len[(L, 1)]} not={by_len[(L, 0)]} "
               f"unknown={by_len[(L, 'unknown')]}")
-    rule_hit = [(r.label, rule_window_scorer(ir, [(r.start, r.end)])[0] > 0)
-                for ir, rs_ in data for r in rs_ if r.label is not None]
+    rule_cnt = [rule_window_scorer(ir, [(r.start, r.end) for r in rs_]) for ir, rs_ in data]
+    rule_hit = [(r.label, c > 0) for (ir, rs_), cs in zip(data, rule_cnt)
+                for r, c in zip(rs_, cs) if r.label is not None]
     pos_cov = sum(1 for y, h in rule_hit if y == 1 and h)
+    n_flag = sum(h for _, h in rule_hit)
     print(f"positives with a rule candidate inside: {pos_cov}/{n_pos}  "
           f"(solver-only positives: {n_pos - pos_cov})")
-    print(f"windows with a rule candidate: {sum(h for _, h in rule_hit)} "
+    print(f"windows with a rule candidate: {n_flag} "
           f"of which reducible: {sum(1 for y, h in rule_hit if h and y == 1)}")
     if a.labels_only:
-        return  
+        return
 
     # ---- fold setup ----
     n_groups = len(fams) if by_family else len({workload(ir.name) for ir, _ in data})
@@ -307,17 +378,23 @@ def main():
     if n_pos < 20:
         print(f"WARNING: only {n_pos} positive windows - treat all numbers as exploratory.")
 
+    # ---- hand features for the LR controls (NEW) ----
+    feats = [window_features(ir, [(r.start, r.end) for r in rs_], True) for ir, rs_ in data]
+    feats_nr = [window_features(ir, [(r.start, r.end) for r in rs_], False) for ir, rs_ in data] if ablate else None
+
     # ---- CV over seeds ----
     baselines = {
         "Random": lambda i, ir, w: [0.0] * len(w),
         "Rule-based (candidates in window)": lambda i, ir, w: rule_window_scorer(ir, w),
         "Window length only": lambda i, ir, w: [float(e - s) for s, e in w],
     }
-    names = [*baselines, "GNN window head", "Rule + GNN tie-break"]
+    names = [*baselines, "GNN window head", "Rule + GNN tie-break",
+             "LR (hand features)", "Rule + LR tie-break"]
     if ablate:
-        names.append("GNN (no rule features)")
+        names += ["GNN (no rule features)", "LR (no rule features)"]
     boot_scores = {}
     res = {n: {} for n in names}
+    strat = {}                       # system -> {"AP rule-flagged": [per seed], "AP unflagged": [...]}
     cal_rows = []                    # per-seed calibration metrics
     temps, first_curves = [], None
     fam_auc = {}                     # family -> per-seed GNN AUROC (out-of-fold)
@@ -369,15 +446,38 @@ def main():
         add("GNN window head", evaluate(data, gnn_scores, seed))
         # rule count dominates (GNN prob < 1), so the GNN only orders windows with equal rule counts
         rule_sc = base_scores["Rule-based (candidates in window)"]
-        hybrid = [[r_ + p for r_, p in zip(rr, pp)] for rr, pp in zip(rule_sc, gnn_scores)]
+        # 0.999 keeps this strictly lexicographic: p < 1 can never overtake a +1 rule count
+        hybrid = [[r_ + 0.999 * p for r_, p in zip(rr, pp)] for rr, pp in zip(rule_sc, gnn_scores)]
         add("Rule + GNN tie-break", evaluate(data, hybrid, seed))
-        nr_scores = None
+
+        # LR controls on the same folds (NEW)
+        lr_sc = lr_oof_scores(data, feats, fold_of)
+        add("LR (hand features)", evaluate(data, lr_sc, seed))
+        hyb_lr = [[r_ + 0.999 * p for r_, p in zip(rr, pp)] for rr, pp in zip(rule_sc, lr_sc)]
+        add("Rule + LR tie-break", evaluate(data, hyb_lr, seed))
+
+        nr_scores = lr_nr = None
         if ablate:
             oof2, fo2 = out_of_fold_logits(data, a.epochs, k_folds, seed, by_family, False)
             nr_scores, _ = crossfit_probs(data, oof2, fo2)
             add("GNN (no rule features)", evaluate(data, nr_scores, seed))
+            lr_nr = lr_oof_scores(data, feats_nr, fo2)
+            add("LR (no rule features)", evaluate(data, lr_nr, seed))
+
+        # stratified AP: rule-flagged vs unflagged windows (NEW)
+        for nm, sc_ in (("GNN window head", gnn_scores), ("GNN (no rule features)", nr_scores),
+                        ("LR (hand features)", lr_sc), ("LR (no rule features)", lr_nr),
+                        ("Window length only", base_scores["Window length only"])):
+            if sc_ is None:
+                continue
+            for tag, flag in (("AP rule-flagged", True), ("AP unflagged", False)):
+                strat.setdefault(nm, {}).setdefault(tag, []).append(
+                    stratified_ap(data, sc_, rule_cnt, flag, random.Random(seed)))
+
         for name_, sc_ in (("GNN window head", gnn_scores), ("Rule + GNN tie-break", hybrid),
-                           ("GNN (no rule features)", nr_scores)):
+                           ("GNN (no rule features)", nr_scores),
+                           ("LR (hand features)", lr_sc), ("Rule + LR tie-break", hyb_lr),
+                           ("LR (no rule features)", lr_nr)):
             if sc_ is None:
                 continue
             acc = boot_scores.setdefault(name_, [[0.0] * len(c) for c in sc_])
@@ -385,7 +485,6 @@ def main():
                 for wi, v in enumerate(c):
                     acc[ci][wi] += v / a.seeds
         boot_scores["Rule-based (candidates in window)"] = rule_sc
-        boot_scores["GNN (no rule features)"] = nr_scores
 
     # ---- report ----
     def fmt(vals):
@@ -420,6 +519,8 @@ def main():
         f"positive circuits, so treat differences of a few points as noise.\n"
         f"- P@k pools hits over circuits (each circuit contributes min(k, #windows) slots). Rule-based "
         f"scores are heavily tied, so its P@1 is an expectation over random tie-breaks.\n"
+        f"- LR baselines are ridge logistic regressions (numpy IRLS, standardised features) on the same "
+        f"per-window extras the GNN head receives, trained on the same folds.\n"
         f"- Calibration (pooled out-of-fold; T cross-fitted, each fold's T fitted on the other folds' "
         f"logits): mean T = {fmt(temps)}; NLL {cal_mean['nll_raw']:.4f} -> {cal_mean['nll_cal']:.4f}; "
         f"Brier {cal_mean['brier_raw']:.4f} -> {cal_mean['brier_cal']:.4f} "
@@ -432,9 +533,13 @@ def main():
                  + "".join(f"| {f} | {fam_pos[f]} | {fmt(v)} |\n" for f, v in sorted(fam_auc.items())))
     pairs = [("GNN window head", "Rule-based (candidates in window)"),
              ("Rule + GNN tie-break", "Rule-based (candidates in window)"),
-             ("Rule + GNN tie-break", "GNN window head")]
+             ("Rule + GNN tie-break", "GNN window head"),
+             ("GNN window head", "LR (hand features)"),
+             ("Rule + GNN tie-break", "Rule + LR tie-break"),
+             ("Rule + LR tie-break", "Rule-based (candidates in window)")]
     if ablate:
         pairs.append(("GNN window head", "GNN (no rule features)"))
+        pairs.append(("GNN (no rule features)", "LR (no rule features)"))
     boot = ("\n### Paired bootstrap over circuits (seed-averaged scores, 1000 resamples, 95% CI)\n\n"
             "| A vs B | ΔAP | ΔAUROC | ΔP@1 |\n|---|---|---|---|\n")
     for A, B in pairs:
@@ -442,6 +547,14 @@ def main():
         cell = lambda m: f"{r_[m][0]:+.3f} [{r_[m][1]:+.3f}, {r_[m][2]:+.3f}]"
         boot += f"| {A} vs {B} | {cell('AP')} | {cell('AUROC')} | {cell('P@1')} |\n"
     boot += "\nA CI that spans 0 means the difference is not distinguishable from noise at this circuit count.\n"
+    n_all = n_pos + n_neg
+    strat_tbl = (f"\n### Stratified AP (rule-flagged: {n_flag} windows, {pos_cov} positives; "
+                 f"unflagged: {n_all - n_flag} windows, {n_pos - pos_cov} positives)\n\n"
+                 "Unflagged windows have all-zero rule evidence, so skill there is not explained by the rules. "
+                 "Few positives: report ± as seed noise only, no significance claim.\n\n"
+                 "| System | AP rule-flagged | AP unflagged |\n|---|---|---|\n"
+                 + "".join(f"| {n} | {fmt(v['AP rule-flagged'])} | {fmt(v['AP unflagged'])} |\n"
+                           for n, v in strat.items()))
     body = (f"Base rate of reducible windows: {n_pos}/{n_pos + n_neg}\n\n"
             "### Ranking (all circuits; AP/AUROC pooled over windows)\n\n"
             + table([f"P@{k}" for k in KS] + ["AP", "AUROC"]) +
@@ -450,7 +563,8 @@ def main():
             f"\n### Top-1 hits (expected number of circuits whose top window is reducible)\n\n"
             f"Denominators: {len(data)} circuits (all), {n_pos_circ} circuits with a positive (*).\n\n"
             + table(["hits@1", "hits@1*"], ["hits@1 (all)", "hits@1* (positive circuits)"]) +
-            "\n### Per-family GNN AUROC (families with positives)\n\n" + fam_table + boot)
+            "\n### Per-family GNN AUROC (families with positives)\n\n" + fam_table
+            + strat_tbl + boot)
     write_pr_table(a.out, body, header=header)
     try:
         plot_reliability(first_curves, a.out.with_suffix(".png"))
@@ -461,4 +575,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-    
