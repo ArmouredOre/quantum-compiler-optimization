@@ -174,3 +174,117 @@ def test_benchmark_report_to_markdown_and_csv():
     assert len(rows) == len(report.rows)
     assert rows[0]["circuit"]
     assert "baseline_gate_count" in rows[0]
+
+
+# -- #23 / #32: baselines, solver column, ablations, one-command report ---------
+
+import os
+import shutil
+
+from qco.evaluation.baselines import Unsupported, cx_cost
+from qco.ir.parser import from_qasm2
+from qco.evaluation.benchmark_runner import BENCH_DIR, main, pipeline_optimizer
+from qco.modules.smt_verifier.equivalence import EquivalenceChecker
+from qco.pipeline import PipelineConfig, optimize
+
+
+def _tiny_suite(tmp_path, names=("ghz_n5.qasm", "grover_w3_i1.qasm")):
+    for n in names:
+        shutil.copy(os.path.join(BENCH_DIR, n), tmp_path / n)
+    return str(tmp_path)
+
+
+def test_cx_cost_is_basis_independent_weighting():
+    ir = IntermediateRepresentation(3).add("h", [0]).add("cx", [0, 1]).add("ccx", [0, 1, 2]).add("swap", [1, 2])
+    assert cx_cost(ir) == 1 + 6 + 3
+
+
+def test_runner_records_solver_seconds_and_skips_unsupported(tmp_path):
+    suite = _tiny_suite(tmp_path)
+
+    def picky(ir):
+        if ir.num_qubits == 5:
+            raise Unsupported("no ghz today")
+        return ir, 1.5
+
+    report = run_benchmarks(picky, suite)
+    assert report.skipped == ["ghz_n5.qasm"]
+    assert [r.solver_seconds for r in report.rows] == [1.5]
+    assert report.rows[0].cx_cost_before == report.rows[0].cx_cost_after > 0
+    small = {r.circuit for r in run_benchmarks(_identity, max_qubits=5).rows}
+    assert "ghz_n5.qasm" in small and "ghz_n10.qasm" not in small
+
+
+@pytest.mark.parametrize("tool", ["qiskit-O0", "qiskit-O1", "qiskit-O2", "qiskit-O3", "tket", "pyzx", "bqskit"])
+def test_baselines_return_equivalent_circuits(tool):
+    from qco.evaluation.baselines import available_baselines
+
+    opt = available_baselines().get(tool)
+    if opt is None:
+        pytest.skip(f"{tool} not installed")
+    ir = from_qasm2(open(os.path.join(BENCH_DIR, "grover_w3_i1.qasm")).read())
+    out = opt(ir.copy())
+    assert out.num_qubits == ir.num_qubits
+    assert EquivalenceChecker(backend="numeric").check(ir, out).equivalent
+
+
+def test_qiskit_levels_improve_on_o0():
+    from qco.evaluation.baselines import available_baselines
+
+    b = available_baselines()
+    if "qiskit-O0" not in b:
+        pytest.skip("qiskit not installed")
+    ir = from_qasm2(open(os.path.join(BENCH_DIR, "grover_w3_i2.qasm")).read())
+    assert b["qiskit-O3"](ir.copy()).gate_count() < b["qiskit-O0"](ir.copy()).gate_count()
+
+
+def test_ablation_flags_switch_modules_off(monkeypatch):
+    from qco.modules.rl_scheduler.agent import RLScheduler
+
+    def boom(self, circuit):
+        raise AssertionError("Module A should be off")
+
+    monkeypatch.setattr(RLScheduler, "schedule", boom)
+    ir = IntermediateRepresentation(2).add("h", [0]).add("h", [0]).add("cx", [0, 1])
+    res = optimize(ir, PipelineConfig(use_rl=False, use_ea=False, solver_budget_s=0.5))
+    assert len(res.pareto_front) == 1
+    assert res.pareto_front[0].circuit.gate_count() == 1
+
+
+@pytest.mark.parametrize("mode", ["gnn", "rule", "random", "exhaustive"])
+def test_window_ranking_modes_stay_equivalent(mode):
+    c = IntermediateRepresentation(4)
+    c.add("h", [1]).add("cx", [0, 1]).add("h", [1]).add("h", [3]).add("cx", [2, 3]).add("h", [3])
+    best, solver_s = pipeline_optimizer(window_ranking=mode, solver_budget_s=5.0)(c.copy())
+    assert EquivalenceChecker().check(c, best).equivalent
+    assert best.gate_count() < c.gate_count()
+    assert 0 < solver_s < float("inf")
+
+
+def test_one_command_builds_every_table(tmp_path):
+    # Tiny suite whose windows re-synthesize instantly (H-CX-H == CZ), so even
+    # the unbudgeted "exhaustive" mode stays fast.
+    suite = tmp_path / "suite"
+    suite.mkdir()
+    c = IntermediateRepresentation(4)
+    c.add("h", [1]).add("cx", [0, 1]).add("h", [1]).add("h", [3]).add("cx", [2, 3]).add("h", [3])
+    (suite / "hcxh.qasm").write_text(c.to_qasm2())
+    suite = str(suite)
+    out = tmp_path / "results"
+    summary = main(["--suite", suite, "--out", str(out), "--budget", "0.5", "--window-max-qubits", "4"])
+    for title in ("qco vs baselines", "Ablations", "N1 window selection"):
+        assert title in summary
+    for row in ("minus A (RL)", "minus D (NSGA-II)", "exhaustive", "| qco |"):
+        assert row in summary
+    assert (out / "summary.md").exists() and (out / "qco.csv").exists()
+
+
+def test_tool_crash_becomes_unsupported_row():
+    from qco.evaluation.baselines import _guard
+
+    @_guard("flaky")
+    def crashes(ir):
+        raise RuntimeError("Can only build replacement circuits for basic gates")
+
+    with pytest.raises(Unsupported, match="flaky: RuntimeError"):
+        crashes(IntermediateRepresentation(1))
