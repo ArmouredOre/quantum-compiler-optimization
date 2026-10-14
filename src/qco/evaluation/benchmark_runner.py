@@ -10,8 +10,9 @@ One command builds every table (#23, #32)::
 
 prints the five-metric tables for Qiskit O0-O3 and writes
 ``results/summary.md`` (qco vs Qiskit / TKET / PyZX / BQSKit, ablations
-minus A/B/C/D, and N1 window-selection: gnn / rule / random / exhaustive) plus
-per-optimizer markdown + CSV.
+minus A/B/C/D, N1 window-selection: gnn / rule / random / exhaustive, N5
+verification cost with confidence gating on / off, per-circuit Pareto fronts)
+plus per-optimizer markdown + CSV and ``results/pareto/`` CSV + plots.
 """
 
 from __future__ import annotations
@@ -344,6 +345,38 @@ def plot_pareto_csv(path: str) -> str | None:
     return out
 
 
+def n5_markdown(suite: str | None, max_qubits: int | None, log=None, **config) -> str:
+    """N5: verification cost with confidence gating on vs off, at equal correctness.
+
+    Totals over the suite; ``config`` goes to ``PipelineConfig`` for both runs."""
+    from qco.pipeline import PipelineConfig, optimize
+
+    lines = [
+        "### N5: confidence-gated verification",
+        "",
+        "| gating | circuits | all verified | unverified blocks | gates after | checks run | "
+        "checks skipped | verification (s) |",
+        "|---|---|---|---|---|---|---|---|",
+    ]
+    for gating in (True, False):
+        n = verified = unverified = gates = calls = skipped = 0
+        seconds = 0.0
+        for name, ir in _load_suite(suite, max_qubits):
+            res = optimize(ir, PipelineConfig(confidence_gating=gating, **config))
+            n += 1
+            verified += res.verified
+            unverified += res.unverified_blocks
+            gates += min(p.circuit.gate_count() for p in res.pareto_front)
+            calls += res.verification_calls
+            skipped += res.verifications_skipped
+            seconds += res.verification_s
+            if log:
+                log(f"  [n5-{'on' if gating else 'off'}] {name[:-5]} {res.verification_s:.2f}s verify")
+        lines.append(f"| {'on' if gating else 'off'} | {n} | {verified}/{n} | {unverified} | {gates} | "
+                     f"{calls} | {skipped} | {seconds:.2f} |")
+    return "\n".join(lines)
+
+
 ABLATIONS = {
     "full": {},
     "minus A (RL)": {"use_rl": False},
@@ -369,7 +402,7 @@ def main(argv: list[str] | None = None) -> str:
     ap.add_argument("--budget", type=float, default=2.0, help="qco solver budget per circuit (s)")
     ap.add_argument("--window-max-qubits", type=int, default=6,
                     help="window-selection runs only on circuits this small ('exhaustive' has no budget)")
-    ap.add_argument("--skip", nargs="*", default=[], choices=["baselines", "ablations", "windows"])
+    ap.add_argument("--skip", nargs="*", default=[], choices=["baselines", "ablations", "windows", "n5"])
     ap.add_argument("--rl-policy", default=DEFAULT_RL_POLICY if os.path.exists(DEFAULT_RL_POLICY) else "none",
                     help="trained Module A policy ('none' = untrained greedy stand-in)")
     ap.add_argument("--gnn-checkpoint", default="auto",
@@ -438,6 +471,11 @@ def main(argv: list[str] | None = None) -> str:
         all_reports.update({f"windows-{m}": r for m, r in windows.items()})
         sections.append(summary_markdown(
             windows, f"N1 window selection (circuits <= {args.window_max_qubits} qubits)"))
+
+    if "n5" not in args.skip:
+        sections.append(n5_markdown(
+            args.suite, args.max_qubits, log=lambda m: print(m, file=sys.stderr, flush=True),
+            solver_budget_s=args.budget, calibration=args.calibration, **trained))
 
     for name, r in all_reports.items():
         slug = "".join(ch if ch.isalnum() or ch in "-_" else "_" for ch in name)
