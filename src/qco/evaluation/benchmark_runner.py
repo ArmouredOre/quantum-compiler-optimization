@@ -10,8 +10,9 @@ One command builds every table (#23, #32)::
 
 prints the five-metric tables for Qiskit O0-O3 and writes
 ``results/summary.md`` (qco vs Qiskit / TKET / PyZX / BQSKit, ablations
-minus A/B/C/D, and N1 window-selection: gnn / rule / random / exhaustive) plus
-per-optimizer markdown + CSV.
+minus A/B/C/D, N1 window-selection: gnn / rule / random / exhaustive, N5
+verification cost with confidence gating on / off, per-circuit Pareto fronts)
+plus per-optimizer markdown + CSV and ``results/pareto/`` CSV + plots.
 """
 
 from __future__ import annotations
@@ -40,6 +41,10 @@ from qco.ir.intermediate_representation import IntermediateRepresentation
 from qco.ir.parser import from_qasm2
 
 BENCH_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "..", "benchmarks", "circuits")
+# Committed Module A policy (Maanas, #29); used by the CLI unless --rl-policy none.
+DEFAULT_RL_POLICY = os.path.normpath(
+    os.path.join(os.path.dirname(__file__), "..", "..", "..", "docs", "rl_training", "ppo_5q", "best.json")
+)
 
 CSV_FIELDS = [
     "circuit", "gate_count_before", "gate_count_after", "depth_before", "depth_after",
@@ -243,16 +248,133 @@ def per_circuit_markdown(reports: dict[str, BenchmarkReport]) -> str:
     return "\n".join(lines)
 
 
-def pipeline_optimizer(**config) -> Callable[[IntermediateRepresentation], tuple]:
-    """qco's ``HybridOptimizer`` as a runner optimizer: best-gate-count front member."""
+def pipeline_optimizer(fronts: dict | None = None, **config) -> Callable[[IntermediateRepresentation], tuple]:
+    """qco's ``HybridOptimizer`` as a runner optimizer: best-gate-count front member.
+    With ``fronts``, each circuit's full Pareto front is stored under ``ir.name``."""
     from qco.pipeline import PipelineConfig, optimize
 
     def run(ir: IntermediateRepresentation):
         res = optimize(ir, PipelineConfig(**config))
+        if fronts is not None:
+            fronts[ir.name] = res.pareto_front
         best = min(res.pareto_front, key=lambda p: (p.objective.gate_count, p.objective.depth))
         return best.circuit, res.solver_time_s
 
     return run
+
+
+# Pareto plots: categorical slots 1-5 of the validated reference palette (light
+# surface), each with its own marker shape so identity never rests on color alone.
+_SERIES_STYLE = {
+    "qco": ("#2a78d6", "o"), "qiskit-O3": ("#eb6834", "s"), "tket": ("#1baf7a", "^"),
+    "pyzx": ("#eda100", "D"), "bqskit": ("#e87ba4", "v"),
+}
+_INK, _MUTED, _GRID, _SURFACE = "#1f1f1e", "#6b6a63", "#e6e5df", "#fcfcfb"
+
+
+def write_pareto(fronts: dict, reports: dict[str, BenchmarkReport], out_dir: str,
+                 calibration: "str | Calibration" = "default") -> str:
+    """Per circuit: ``<out_dir>/<circuit>.csv`` (qco front, input, baselines) and,
+    with matplotlib, ``<circuit>.png`` drawn from that CSV (``plot_pareto_csv``).
+    Returns a markdown table of front sizes."""
+    os.makedirs(out_dir, exist_ok=True)
+    cal = get_calibration(calibration)
+    lines = ["| circuit | front size | gates (min) | depth (min) | est. fidelity (max) |", "|---|---|---|---|---|"]
+    for name, front in sorted(fronts.items()):
+        q = [(p.circuit.gate_count(), p.circuit.depth(), cx_cost(p.circuit), estimated_fidelity(p.circuit, cal).value)
+             for p in front]
+        rows = [("qco", *x) for x in q]
+        for tool, r in reports.items():
+            for row in r.rows:
+                if row.circuit[: -len(".qasm")] != name:
+                    continue
+                if not any(x[0] == "input" for x in rows):
+                    rows.insert(0, ("input", row.gate_count_before, row.depth_before, row.cx_cost_before, ""))
+                if tool in _SERIES_STYLE and tool != "qco":
+                    rows.append((tool, row.gate_count_after, row.depth_after, row.cx_cost_after, row.fidelity_after))
+        path = os.path.join(out_dir, f"{name}.csv")
+        with open(path, "w", encoding="utf-8", newline="") as fh:
+            w = csv.writer(fh)
+            w.writerow(["source", "gate_count", "depth", "cx_cost", "est_fidelity"])
+            w.writerows(rows)
+        plot_pareto_csv(path)
+        lines.append(f"| {name} | {len(q)} | {min(x[0] for x in q)} | {min(x[1] for x in q)} | "
+                     f"{max(x[3] for x in q):.4f} |")
+    return "\n".join(lines)
+
+
+def plot_pareto_csv(path: str) -> str | None:
+    """Render ``<circuit>.csv`` from ``write_pareto`` to ``<circuit>.png``; None without matplotlib."""
+    try:
+        import matplotlib
+
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+    except ImportError:
+        return None
+    with open(path, encoding="utf-8") as fh:
+        rows = list(csv.DictReader(fh))
+    name = os.path.basename(path)[: -len(".csv")]
+    fig, axes = plt.subplots(1, 2, figsize=(9, 3.9), facecolor=_SURFACE)
+    panels = [("depth", "depth  (lower-left is better)"), ("est_fidelity", "estimated fidelity  (upper-left is better)")]
+    for ax, (col, title) in zip(axes, panels):
+        ax.set_facecolor(_SURFACE)
+        for tool, (color, marker) in [*_SERIES_STYLE.items(), ("input", (_MUTED, "x"))]:
+            pts = sorted((int(r["gate_count"]), float(r[col])) for r in rows if r["source"] == tool and r[col] != "")
+            if not pts:
+                continue
+            xs, ys = zip(*pts)
+            if tool == "qco" and len(pts) > 1:
+                ax.plot(xs, ys, color=color, linewidth=2, zorder=2)
+            ax.scatter(xs, ys, color=color, marker=marker, s=64, zorder=3,
+                       edgecolors=_SURFACE if marker != "x" else None, linewidths=2,
+                       label="qco Pareto front" if tool == "qco" else tool)
+        ax.set_title(title, color=_INK, fontsize=9, loc="left")
+        ax.set_xlabel("gate count", color=_MUTED)
+        ax.tick_params(colors=_MUTED, length=0)
+        ax.grid(color=_GRID, linewidth=1)
+        for side in ax.spines.values():
+            side.set_visible(False)
+    handles, labels = axes[0].get_legend_handles_labels()
+    fig.legend(handles, labels, loc="lower center", ncol=len(labels), frameon=False, fontsize=8, labelcolor=_INK)
+    fig.suptitle(f"{name}: qco Pareto front vs baselines", color=_INK, fontsize=10)
+    fig.tight_layout(rect=(0, 0.08, 1, 1))
+    out = path[: -len(".csv")] + ".png"
+    fig.savefig(out, dpi=150, facecolor=_SURFACE)
+    plt.close(fig)
+    return out
+
+
+def n5_markdown(suite: str | None, max_qubits: int | None, log=None, **config) -> str:
+    """N5: verification cost with confidence gating on vs off, at equal correctness.
+
+    Totals over the suite; ``config`` goes to ``PipelineConfig`` for both runs."""
+    from qco.pipeline import PipelineConfig, optimize
+
+    lines = [
+        "### N5: confidence-gated verification",
+        "",
+        "| gating | circuits | all verified | unverified blocks | gates after | checks run | "
+        "checks skipped | verification (s) |",
+        "|---|---|---|---|---|---|---|---|",
+    ]
+    for gating in (True, False):
+        n = verified = unverified = gates = calls = skipped = 0
+        seconds = 0.0
+        for name, ir in _load_suite(suite, max_qubits):
+            res = optimize(ir, PipelineConfig(confidence_gating=gating, **config))
+            n += 1
+            verified += res.verified
+            unverified += res.unverified_blocks
+            gates += min(p.circuit.gate_count() for p in res.pareto_front)
+            calls += res.verification_calls
+            skipped += res.verifications_skipped
+            seconds += res.verification_s
+            if log:
+                log(f"  [n5-{'on' if gating else 'off'}] {name[:-5]} {res.verification_s:.2f}s verify")
+        lines.append(f"| {'on' if gating else 'off'} | {n} | {verified}/{n} | {unverified} | {gates} | "
+                     f"{calls} | {skipped} | {seconds:.2f} |")
+    return "\n".join(lines)
 
 
 ABLATIONS = {
@@ -265,6 +387,12 @@ ABLATIONS = {
 WINDOW_MODES = ("gnn", "rule", "random", "exhaustive")
 
 
+def _shown(path: str) -> str:
+    """Repo-relative path for report headers ('none' passes through)."""
+    root = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+    return path if path == "none" else os.path.relpath(os.path.abspath(path), root)
+
+
 def main(argv: list[str] | None = None) -> str:
     ap = argparse.ArgumentParser(description="qco Stage 6: baselines, ablations, window selection")
     ap.add_argument("--suite", default=None, help="directory of .qasm files (default: committed suite)")
@@ -274,11 +402,23 @@ def main(argv: list[str] | None = None) -> str:
     ap.add_argument("--budget", type=float, default=2.0, help="qco solver budget per circuit (s)")
     ap.add_argument("--window-max-qubits", type=int, default=6,
                     help="window-selection runs only on circuits this small ('exhaustive' has no budget)")
-    ap.add_argument("--skip", nargs="*", default=[], choices=["baselines", "ablations", "windows"])
+    ap.add_argument("--skip", nargs="*", default=[], choices=["baselines", "ablations", "windows", "n5"])
+    ap.add_argument("--rl-policy", default=DEFAULT_RL_POLICY if os.path.exists(DEFAULT_RL_POLICY) else "none",
+                    help="trained Module A policy ('none' = untrained greedy stand-in)")
     ap.add_argument("--gnn-checkpoint", default="auto",
                 type=lambda s: None if s.lower() == "none" else s,
                 help="'none' = rule-based fallback, 'auto' = checkpoints/module_b.pt if present, or a path")
     args = ap.parse_args(argv)
+    trained = {
+        "rl_policy_path": None if args.rl_policy == "none" else args.rl_policy,
+        "gnn_checkpoint": args.gnn_checkpoint,
+    }
+    from qco.pipeline import DEFAULT_CHECKPOINT, _load_gnn
+
+    # "auto" silently falls back to rules (no checkpoint / no torch): ask the loader, not the flag.
+    gnn_trained = _load_gnn(args.gnn_checkpoint)._net is not None
+    gnn_shown = (_shown(str(DEFAULT_CHECKPOINT)) if args.gnn_checkpoint == "auto" else _shown(args.gnn_checkpoint)) \
+        if gnn_trained else "none (rule-based)"
 
     def bench(opt, label, max_qubits=args.max_qubits):
         def logged(ir):  # progress to stderr: full runs take tens of minutes
@@ -291,15 +431,23 @@ def main(argv: list[str] | None = None) -> str:
 
         return run_benchmarks(logged, args.suite, args.calibration, max_qubits=max_qubits)
 
-    def qco(**cfg):
-        return pipeline_optimizer(solver_budget_s=args.budget, calibration=args.calibration,
-                                    gnn_checkpoint=args.gnn_checkpoint, **cfg)
+    def qco(fronts=None, **cfg):
+        return pipeline_optimizer(fronts=fronts, solver_budget_s=args.budget, calibration=args.calibration,
+                                  **trained, **cfg)
+
     os.makedirs(args.out, exist_ok=True)
-    sections = [f"# qco evaluation\n\nCalibration `{args.calibration}`, solver budget {args.budget}s/circuit. "
-                "CX-cost = multi-qubit gates in CX-equivalents (basis-independent; tools emit different gate sets)."]
+    sections = [f"# qco evaluation\n\nCalibration `{args.calibration}`, solver budget {args.budget}s/circuit, "
+                f"RL policy `{_shown(args.rl_policy)}`, GNN checkpoint `{gnn_shown}`. "
+                "CX-cost = multi-qubit gates in CX-equivalents (basis-independent; tools emit different gate sets)."
+                + "".join(f"\n\n> **Provisional:** {note}" for note in (
+                    "Module A ran as the untrained greedy stand-in (no RL policy)." if args.rl_policy == "none" else "",
+                    "Module B ran as the rule-based stand-in (no trained GNN), so 'gnn' rows = rule-based."
+                    if not gnn_trained else "",
+                ) if note)]
     all_reports: dict[str, BenchmarkReport] = {}
 
-    full = bench(qco(), "qco")
+    fronts: dict = {}
+    full = bench(qco(fronts=fronts), "qco")
     all_reports["qco"] = full
     if "baselines" not in args.skip:
         compared = {"qco": full}
@@ -308,6 +456,9 @@ def main(argv: list[str] | None = None) -> str:
             if name.startswith("qiskit-O"):
                 print(f"## {name}\n\n{compared[name].to_markdown()}\n", flush=True)
         sections += [summary_markdown(compared, "qco vs baselines"), per_circuit_markdown(compared)]
+    pareto_dir = os.path.join(args.out, "pareto")
+    sections.append(f"### Pareto fronts (qco, per circuit)\n\nPlots + CSV in `{pareto_dir}/`.\n\n"
+                    + write_pareto(fronts, {"qco": full, **all_reports}, pareto_dir, args.calibration))
     if "ablations" not in args.skip:
         ablated = {"full": full}
         for name, cfg in ABLATIONS.items():
@@ -320,6 +471,11 @@ def main(argv: list[str] | None = None) -> str:
         all_reports.update({f"windows-{m}": r for m, r in windows.items()})
         sections.append(summary_markdown(
             windows, f"N1 window selection (circuits <= {args.window_max_qubits} qubits)"))
+
+    if "n5" not in args.skip:
+        sections.append(n5_markdown(
+            args.suite, args.max_qubits, log=lambda m: print(m, file=sys.stderr, flush=True),
+            solver_budget_s=args.budget, calibration=args.calibration, **trained))
 
     for name, r in all_reports.items():
         slug = "".join(ch if ch.isalnum() or ch in "-_" else "_" for ch in name)
