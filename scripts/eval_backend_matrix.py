@@ -25,12 +25,16 @@ def main(argv=None) -> int:
     ap.add_argument("--timesteps", type=int)
     ap.add_argument("--n-eval", type=int, default=60, help="held-out circuits (own seed, disjoint from training)")
     ap.add_argument("--out", default="docs/rl_training")
+    ap.add_argument("--no-lookahead", action="store_true",
+                    help="hide the calibrated one-step lookahead from the policy so it must learn the backend from reward alone")
     ap.add_argument("--models", help="directory to save each policy as <profile>_seed<k>.json")
     a = ap.parse_args(argv)
 
     base = RLConfig.from_yaml(a.config)
     if a.timesteps:
         base = RLConfig.from_dict({**base.to_dict(), "total_timesteps": a.timesteps})
+    if a.no_lookahead:
+        base = RLConfig.from_dict({**base.to_dict(), "lookahead": False})
     pols = train_backend_policies(base, tuple(a.profiles), tuple(a.seeds), log=None)
     pool = sample_circuits(base.train_qubits[0], a.n_eval, 4242, base.circuit_families, base.circuit_layers)
     res = cross_matrix(pols, pool, tuple(a.profiles))
