@@ -36,6 +36,7 @@ from __future__ import annotations
 import enum
 from dataclasses import dataclass
 
+from qco.evaluation.hardware import HardwareProfile, get_hardware, hardware_execution_time, hardware_fidelity
 from qco.evaluation.metrics import estimated_fidelity, execution_time, scalarized_reward
 from qco.graphs.dag import GateDAG, build_dag
 from qco.ir.intermediate_representation import ARITY, PARAMETRIC, IntermediateRepresentation
@@ -119,6 +120,7 @@ class SchedulerEnv:
         *,
         max_episode_steps: int = 200,
         calibration: str = "default",
+        hardware: "str | HardwareProfile | None" = None,
         commutation: str = "disjoint",
         reduction: bool = False,
         cr_window: int | None = None,
@@ -127,7 +129,10 @@ class SchedulerEnv:
         self.initial = circuit.copy()
         self.weights = weights or RewardWeights()
         self.max_episode_steps = max_episode_steps
-        self.calibration = calibration
+        # Opt-in (Sprint 3 follow-up): a HardwareProfile adds topology / SWAP-routing /
+        # native-gate costs to the time and fidelity terms. None = old Calibration-only behaviour.
+        self.hardware = get_hardware(hardware) if hardware is not None else None
+        self.calibration = self.hardware.calibration if self.hardware else calibration
         self.commutation = validate_mode(commutation)
         self.reduction = reduction
         self.cr_window = cr_window
@@ -153,10 +158,21 @@ class SchedulerEnv:
         # action just taken rather than re-scoring the whole episode each step.
         self._prev_gate_count = self.circuit.gate_count()
         self._prev_depth = self.circuit.depth()
-        self._prev_fidelity = estimated_fidelity(self.circuit, self.calibration).value
-        self._prev_time = execution_time(self.circuit, self.calibration).value
+        self._prev_fidelity = self.fidelity_of(self.circuit)
+        self._prev_time = self.time_of(self.circuit)
         # one "layer-equivalent" in ns: average critical-path time per layer of the start
         self.time_unit = max(self._prev_time / max(self.circuit.depth(), 1), 1e-9)
+
+    # -- backend-aware metrics (hardware profile if set, else the Calibration) ---
+    def time_of(self, circuit: IntermediateRepresentation) -> float:
+        if self.hardware is not None:
+            return hardware_execution_time(circuit, self.hardware)
+        return execution_time(circuit, self.calibration).value
+
+    def fidelity_of(self, circuit: IntermediateRepresentation) -> float:
+        if self.hardware is not None:
+            return hardware_fidelity(circuit, self.hardware)
+        return estimated_fidelity(circuit, self.calibration).value
 
     # -- Gymnasium API -----------------------------------------------------
     def reset(self, *, seed: int | None = None):
@@ -217,12 +233,12 @@ class SchedulerEnv:
 
         new_gate_count = self.circuit.gate_count()
         new_depth = self.circuit.depth()
-        new_fidelity = estimated_fidelity(self.circuit, self.calibration).value
+        new_fidelity = self.fidelity_of(self.circuit)
 
         d_gate_count = self._prev_gate_count - new_gate_count
         d_depth = self._prev_depth - new_depth
         d_fidelity = new_fidelity - self._prev_fidelity
-        new_time = execution_time(self.circuit, self.calibration).value if self.weights.time else self._prev_time
+        new_time = self.time_of(self.circuit) if self.weights.time else self._prev_time
         d_time = (self._prev_time - new_time) / self.time_unit
 
         reward = (

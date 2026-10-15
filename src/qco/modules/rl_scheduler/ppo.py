@@ -50,6 +50,7 @@ def make_env(circuit: IntermediateRepresentation, config: RLConfig) -> Scheduler
         config.weights,
         max_episode_steps=config.max_episode_steps,
         calibration=config.calibration,
+        hardware=config.hardware,
         commutation=config.commutation,
         reduction=config.deterministic_reduction,
         cr_window=config.cr_window,

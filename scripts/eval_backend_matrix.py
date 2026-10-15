@@ -11,6 +11,7 @@ import json
 from pathlib import Path
 
 from qco.evaluation.calibration import list_calibrations
+from qco.evaluation.hardware import list_hardware
 from qco.modules.rl_scheduler.backend_matrix import DEFAULT_PROFILES, cross_matrix, to_markdown, train_backend_policies
 from qco.modules.rl_scheduler.circuits import sample_circuits
 from qco.modules.rl_scheduler.config import RLConfig
@@ -20,7 +21,7 @@ from qco.modules.rl_scheduler.ppo import save_policy
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--config", default="configs/rl_ppo_5q.yaml")
-    ap.add_argument("--profiles", nargs="+", default=list(DEFAULT_PROFILES), help=f"from: {', '.join(list_calibrations())}")
+    ap.add_argument("--profiles", nargs="+", default=list(DEFAULT_PROFILES), help=f"calibrations: {', '.join(list_calibrations())}; hardware profiles: {', '.join(list_hardware())}")
     ap.add_argument("--seeds", type=int, nargs="+", default=[0, 1, 2])
     ap.add_argument("--timesteps", type=int)
     ap.add_argument("--n-eval", type=int, default=60, help="held-out circuits (own seed, disjoint from training)")

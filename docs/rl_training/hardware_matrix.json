@@ -1,0 +1,132 @@
+{
+ "profiles": [
+  "ibm_grid_like",
+  "line_superconducting_like",
+  "ion_all_to_all_like"
+ ],
+ "seeds": [
+  0,
+  1,
+  2,
+  3
+ ],
+ "n_circuits": 40,
+ "matrix": {
+  "ibm_grid_like": {
+   "ibm_grid_like": {
+    "mean": 8.486001984270345,
+    "std_over_seeds": 0.28036280596713875,
+    "per_seed": [
+     8.790463067072881,
+     8.238709185937886,
+     8.175523512138401,
+     8.739312171932216
+    ]
+   },
+   "line_superconducting_like": {
+    "mean": 8.519731350152426,
+    "std_over_seeds": 1.0407799245653027,
+    "per_seed": [
+     8.81453262439052,
+     9.653434792416729,
+     6.8204949167295785,
+     8.790463067072881
+    ]
+   },
+   "ion_all_to_all_like": {
+    "mean": 6.263247645276934,
+    "std_over_seeds": 0.4678243957208252,
+    "per_seed": [
+     5.990479076408381,
+     5.990479076408381,
+     5.998509054995105,
+     7.073523373295868
+    ]
+   },
+   "greedy_time": {
+    "mean": 7.073523373295868
+   }
+  },
+  "line_superconducting_like": {
+   "ibm_grid_like": {
+    "mean": 7.458421685256328,
+    "std_over_seeds": 0.22929004255601929,
+    "per_seed": [
+     7.147356353443602,
+     7.348621854172833,
+     7.58849784745305,
+     7.749210685955823
+    ]
+   },
+   "line_superconducting_like": {
+    "mean": 6.596290700515739,
+    "std_over_seeds": 0.3433194111880099,
+    "per_seed": [
+     6.254226890792319,
+     6.891021430372163,
+     6.254937508705268,
+     6.984976972193207
+    ]
+   },
+   "ion_all_to_all_like": {
+    "mean": 5.880561616850396,
+    "std_over_seeds": 0.12523774004153265,
+    "per_seed": [
+     5.750463134580494,
+     6.005751245448474,
+     6.005751245448474,
+     5.76028084192414
+    ]
+   },
+   "greedy_time": {
+    "mean": 6.264755216048913
+   }
+  },
+  "ion_all_to_all_like": {
+   "ibm_grid_like": {
+    "mean": 1.8992870993545825,
+    "std_over_seeds": 0.0034467263800096837,
+    "per_seed": [
+     1.9025267419444754,
+     1.902720277972355,
+     1.8947311765556276,
+     1.8971702009458715
+    ]
+   },
+   "line_superconducting_like": {
+    "mean": 1.9012969986751829,
+    "std_over_seeds": 0.004253791870582887,
+    "per_seed": [
+     1.9035213509864541,
+     1.9071772744943514,
+     1.8971702009458715,
+     1.8973191682740542
+    ]
+   },
+   "ion_all_to_all_like": {
+    "mean": 1.9047912177760937,
+    "std_over_seeds": 0.010720197234132452,
+    "per_seed": [
+     1.899349799899664,
+     1.8971702009458715,
+     1.899349799899664,
+     1.9232950703591754
+    ]
+   },
+   "greedy_time": {
+    "mean": 1.9086885421614603
+   }
+  }
+ },
+ "wins_own_backend": {
+  "ibm_grid_like": false,
+  "line_superconducting_like": false,
+  "ion_all_to_all_like": true
+ },
+ "own_wins_per_seed": {
+  "ibm_grid_like": 1,
+  "line_superconducting_like": 0,
+  "ion_all_to_all_like": 2
+ },
+ "fraction_schedules_differ": 0.06944444444444445
+}
