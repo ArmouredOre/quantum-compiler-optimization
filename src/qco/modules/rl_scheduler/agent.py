@@ -50,13 +50,31 @@ class RLScheduler:
         return history
 
     def save(self, path: str | Path) -> None:
+        """Built-in policy -> JSON; SB3 model -> ``.zip`` (config goes to ``<path>.config.yaml``)."""
         if self._model is None:
             raise RuntimeError("nothing to save: train() or load() first")
+        if self.config.backend == "sb3":
+            path = Path(path)
+            self._model.save(str(path.with_suffix("")))
+            self.config.to_yaml(path.with_suffix(".config.yaml"))
+            return
         from qco.modules.rl_scheduler.ppo import save_policy
 
         save_policy(self._model, path, {"config": self.config.to_dict()})
 
     def load(self, path: str | Path) -> "RLScheduler":
+        """Load a built-in JSON checkpoint, or an SB3 ``.zip`` (needs the ``rl`` extra)."""
+        if str(path).endswith(".zip"):
+            from qco.modules.rl_scheduler.sb3_backend import load_sb3
+
+            cfg_path = Path(path).with_suffix(".config.yaml")
+            if not cfg_path.exists():
+                cfg_path = Path(path).parent / "config.yaml"  # written by train_sb3
+            if cfg_path.exists():
+                self.config = RLConfig.from_yaml(cfg_path)
+            self.config.backend = "sb3"
+            self._model = load_sb3(path)
+            return self
         from qco.modules.rl_scheduler.ppo import load_policy
 
         self._model, payload = load_policy(path, self.config.numeric_backend)
@@ -74,6 +92,10 @@ class RLScheduler:
         commute only when it *strictly* reduces circuit depth, so the pipeline
         produces a correct, terminating result before the agent is trained.
         """
+        if self._model is not None and self.config.backend == "sb3":
+            from qco.modules.rl_scheduler.sb3_backend import run_sb3_policy
+
+            return run_sb3_policy(self._model, circuit, self.config)
         if self._model is not None:
             from qco.modules.rl_scheduler.ppo import run_policy
 

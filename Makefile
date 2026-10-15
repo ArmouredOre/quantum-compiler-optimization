@@ -1,4 +1,4 @@
-.PHONY: help setup benchmarks check test eval clean train-rl train-rl-smoke
+.PHONY: help setup benchmarks check test eval clean train-rl train-rl-smoke eval-generalization eval-backends
 
 help:
 	@echo "setup       - create venv and install dev extras"
@@ -7,6 +7,8 @@ help:
 	@echo "test        - run the Phase 2 smoke tests"
 	@echo "eval        - baselines + ablations + window-selection tables into results/"
 	@echo "train-rl   - full Module A PPO training (configs/rl_ppo_5q.yaml)"
+	@echo "eval-generalization - train 5q, zero-shot 5/10/20q table (#26)"
+	@echo "eval-backends - per-device-profile policies + cross-backend matrix (#29)"
 	@echo "train-rl-smoke - tiny Module A training smoke run"
 	@echo "clean       - remove caches and build artifacts"
 
@@ -28,6 +30,12 @@ eval:
 
 train-rl:
 	python3 scripts/train_rl.py --config configs/rl_ppo_5q.yaml --out runs/rl_5q --compare
+
+eval-generalization:
+	python3 scripts/eval_generalization.py --seeds 0 1 2 --timesteps 100000 --out docs/rl_training --save-checkpoint models/rl_ppo_5q.json
+
+eval-backends:
+	python3 scripts/eval_backend_matrix.py --seeds 0 1 2 --timesteps 60000 --out docs/rl_training --models models/backend
 
 train-rl-smoke:
 	python3 scripts/train_rl.py --config configs/rl_smoke.yaml --out runs/rl_smoke

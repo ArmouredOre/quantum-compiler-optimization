@@ -36,7 +36,7 @@ from __future__ import annotations
 import enum
 from dataclasses import dataclass
 
-from qco.evaluation.metrics import estimated_fidelity, scalarized_reward
+from qco.evaluation.metrics import estimated_fidelity, execution_time, scalarized_reward
 from qco.graphs.dag import GateDAG, build_dag
 from qco.ir.intermediate_representation import ARITY, PARAMETRIC, IntermediateRepresentation
 from qco.modules.rl_scheduler.commutation import commutes, validate_mode
@@ -68,6 +68,12 @@ class RewardWeights:
     # module docstring). Zero disables the terminal bonus entirely, which is
     # useful for unit tests that only want to check the per-step shaping term.
     terminal: float = 1.0
+    # Sprint 3 (#29): weight on the per-step drop in *calibrated* execution time
+    # (critical-path ns under ``calibration``), expressed in "average layers" so it
+    # is on the same scale as ``depth``. 0.0 (default) keeps the old reward exactly.
+    # This is what lets policies trained under different device profiles differ:
+    # depth and gate-count rewards are backend-independent, execution time is not.
+    time: float = 0.0
 
 
 # Fixed gate-name -> small-int vocabulary for the ``gate_features`` observation
@@ -148,6 +154,9 @@ class SchedulerEnv:
         self._prev_gate_count = self.circuit.gate_count()
         self._prev_depth = self.circuit.depth()
         self._prev_fidelity = estimated_fidelity(self.circuit, self.calibration).value
+        self._prev_time = execution_time(self.circuit, self.calibration).value
+        # one "layer-equivalent" in ns: average critical-path time per layer of the start
+        self.time_unit = max(self._prev_time / max(self.circuit.depth(), 1), 1e-9)
 
     # -- Gymnasium API -----------------------------------------------------
     def reset(self, *, seed: int | None = None):
@@ -213,16 +222,20 @@ class SchedulerEnv:
         d_gate_count = self._prev_gate_count - new_gate_count
         d_depth = self._prev_depth - new_depth
         d_fidelity = new_fidelity - self._prev_fidelity
+        new_time = execution_time(self.circuit, self.calibration).value if self.weights.time else self._prev_time
+        d_time = (self._prev_time - new_time) / self.time_unit
 
         reward = (
             self.weights.gate_count * d_gate_count
             + self.weights.depth * d_depth
             + self.weights.fidelity * d_fidelity
+            + self.weights.time * d_time
         )
 
         self._prev_gate_count = new_gate_count
         self._prev_depth = new_depth
         self._prev_fidelity = new_fidelity
+        self._prev_time = new_time
 
         terminated = (self.stop_on_noop and action.kind == ActionKind.NOOP) or self._is_fixed_point()
         truncated = self._steps >= self.max_episode_steps
@@ -237,6 +250,7 @@ class SchedulerEnv:
             "d_gate_count": d_gate_count,
             "d_depth": d_depth,
             "d_fidelity": d_fidelity,
+            "d_time": d_time,
             "cr_removed": cr_removed,
         }
         return self.observation(), reward, terminated, truncated, info

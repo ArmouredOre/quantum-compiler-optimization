@@ -1,0 +1,15 @@
+# Module A — tiny smoke run (committed output: docs/rl_training/smoke/). Seconds, pure Python OK.
+algo: ppo
+backend: builtin
+seed: 0
+total_timesteps: 600
+train_qubits: [5]
+commutation: full
+n_steps: 200
+epochs: 2
+minibatch: 64
+n_train_circuits: 4
+n_eval_circuits: 4
+circuit_layers: 6
+eval_every: 1
+checkpoint_every: 1

@@ -41,7 +41,8 @@ class RLConfig:
     max_episode_steps: int = 40
     calibration: str = "default"
     cr_window: int | None = None
-    lookahead: bool = True       # give the policy the one-step depth delta of each candidate move
+    lookahead: bool = True       # give the policy the one-step improvement of each candidate move
+    lookahead_metric: str = "depth"  # "depth" (backend-independent) | "time" (calibrated execution time; #29)
 
     # ---- training circuits (generated on the fly; disjoint from benchmarks/) ---
     circuit_families: tuple[str, ...] = ("clifford_t", "cnot_pauli", "qaoa", "qft")
@@ -75,6 +76,11 @@ class RLConfig:
             raise ValueError(f"backend must be one of {BACKENDS}, got {self.backend!r}")
         if self.commutation not in ("disjoint", "full"):
             raise ValueError(f"commutation must be 'disjoint' or 'full', got {self.commutation!r}")
+        if self.lookahead_metric not in ("depth", "time"):
+            raise ValueError(f"lookahead_metric must be 'depth' or 'time', got {self.lookahead_metric!r}")
+        from qco.evaluation.calibration import get_calibration
+
+        get_calibration(self.calibration)  # raises KeyError listing valid profiles
         if self.total_timesteps <= 0 or self.n_steps <= 0 or self.minibatch <= 0 or self.epochs <= 0:
             raise ValueError("total_timesteps, n_steps, minibatch and epochs must be positive")
         if self.max_episode_steps <= 0:
