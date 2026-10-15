@@ -43,8 +43,6 @@ Result (60 held-out 5q circuits, **7 seeds**, 60k steps; mean ± std of executio
 * Why it is hard: a policy trained on A and run on B gets B's calibrated lookahead as an input, so it adapts to B through its features; the remaining backend-specific behaviour is small. I also tried hiding the lookahead (`--no-lookahead`, 100k steps, 3 seeds, `backend_matrix_nolookahead.md`): policies then only reach ~2-3 % (vs ~7.5-8 %) and still do not specialize (ion-like again loses its own column).
 * What would likely change it: profiles that differ in structure (connectivity / SWAP cost, native gate sets) rather than scale, larger circuits, or multi-step credit assignment. Recommendation: relax the criterion to "measurably different schedules + matrix reported", or scope a follow-up with structurally different profiles; I did not tune the result to force a win.
 
-* **Follow-up:** the structural-profile experiment (topology, SWAP cost, native gates) is in `docs/hardware_profiles.md` and sub-issue draft `docs/issues/sub_issue_hardware_profiles.md`; it shows structure does matter (routing-constrained policies beat all-to-all ones by ~2.2 points on the grid) but still no clean per-backend win.
-
 ## How to run / test
 ```bash
 make eval-generalization    # ~25 min on 2 cores (6 trainings); writes docs/rl_training/generalization.*
