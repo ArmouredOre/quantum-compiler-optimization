@@ -22,9 +22,12 @@ Novelty wiring (#31, docs/novelty_plan.md):
 from __future__ import annotations
 
 import math
+import multiprocessing
+import os
 import random
 import time
 import warnings
+from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
 from types import SimpleNamespace
@@ -43,6 +46,8 @@ from qco.modules.smt_verifier.equivalence import EquivalenceChecker, Equivalence
 
 # Assumes this file is src/qco/pipeline.py; adjust to wherever the checkpoint is committed.
 DEFAULT_CHECKPOINT = Path(__file__).resolve().parents[2] / "checkpoints" / "module_b.pt"
+# Committed trained Module A policy (#26 / #35): what ``rl_policy_path="auto"`` loads.
+DEFAULT_RL_POLICY = Path(__file__).resolve().parents[2] / "models" / "rl_ppo_5q.json"
 
 
 @dataclass(slots=True)
@@ -77,13 +82,21 @@ class PipelineConfig:
     use_ea: bool = True
     # N1 window selection: "gnn" | "rule" | "random" | "exhaustive" (no budget).
     window_ranking: str = "gnn"
-    # Trained Module A (#36): None keeps the untrained greedy stand-in.
-    rl_policy_path: str | None = None       # RLScheduler.load (e.g. docs/rl_training/ppo_5q/best.json)
+    # Trained Module A (#35/#36): "auto" (default) = DEFAULT_RL_POLICY if it exists, else the
+    # untrained greedy stand-in; None = force the stand-in; any other string = explicit
+    # checkpoint path for RLScheduler.load (errors are raised, never hidden).
+    rl_policy_path: str | None = "auto"
     # #34: "auto" = DEFAULT_CHECKPOINT if present (else rule-based); None = rule-based
     # fallback; any other string = explicit checkpoint path (errors are raised, never hidden).
     gnn_checkpoint: str | None = "auto"
     # Reward hook (#35): called with a RewardEvent per block and per feedback iteration.
     reward_hook: "Callable[[RewardEvent], None] | None" = None
+    # Parallel blocks (#46): worker processes for the per-block Stage 4 work. 1 = serial (default,
+    # byte-for-byte the old behaviour); 0 = os.cpu_count(). Needs the "fork" start method (Linux/macOS);
+    # elsewhere it falls back to serial with a warning. Output equals the serial run whenever the
+    # solver budget is not binding (exhaustive ranking, or no re-synthesis); with a binding budget each
+    # block gets budget / n_blocks in parallel (serial is first-come), see docs/parallel_blocks.md.
+    parallel_blocks: int = 1
 
 
 @dataclass(slots=True)
@@ -116,6 +129,8 @@ class PipelineResult:
     verification_calls: int = 0
     verification_s: float = 0.0
     verifications_skipped: int = 0   # rewrites accepted as rule-proven without a check
+    parallel_workers: int = 1        # workers actually used for the block stage (#46)
+    block_stage_s: float = 0.0       # wall-clock of the per-block Stage 4 work, summed over iterations (#46)
 
 
 def apply_cancellations(ir: IntermediateRepresentation, candidates) -> tuple[IntermediateRepresentation, list]:
@@ -212,12 +227,42 @@ def _window_spans(ir: IntermediateRepresentation, windows) -> list[tuple[int, in
     return spans
 
 
+# --- parallel block processing (#46) ----------------------------------------------
+# Workers are forked, so they inherit the optimizer (trained policy, GNN, checkers) copy-on-write;
+# only the Block goes in and only the verified variants plus audit deltas come back.
+_FORK_TARGET: "HybridOptimizer | None" = None
+
+
+def _block_job(idx: int, block: Block, budget: float):
+    opt = _FORK_TARGET
+    assert opt is not None, "parallel block job started without a fork target"
+    opt.revert_events = []
+    opt._unverified = set()
+    opt._reset_verify_stats()
+    opt._solver_left, opt._solver_spent = budget, 0.0
+    variants = opt._block_variants(block, idx)
+    return (variants, opt.revert_events, opt._unverified, opt._verify_calls, opt._verify_s,
+            opt._verify_skipped, opt._solver_spent)
+
+
+def _chunk_job(items: list, budget: float):
+    """Several blocks per task: one IPC round trip per chunk, not per block (blocks are ~ms each)."""
+    return [_block_job(idx, block, budget) for idx, block in items]
+
+
+def resolve_workers(requested: int) -> int:
+    return (os.cpu_count() or 1) if requested == 0 else max(int(requested), 1)
+
+
 class HybridOptimizer:
     def __init__(self, config: PipelineConfig | None = None):
         self.config = config or PipelineConfig()
         self.rl = RLScheduler()
-        if self.config.rl_policy_path:
-            self.rl.load(self.config.rl_policy_path)
+        rl_path = self.config.rl_policy_path
+        if rl_path == "auto":
+            rl_path = str(DEFAULT_RL_POLICY) if DEFAULT_RL_POLICY.exists() else None
+        if rl_path:
+            self.rl.load(rl_path)
         self.rl.config.calibration = self.config.calibration  # after load: load restores its own config
         self.gnn = _load_gnn(self.config.gnn_checkpoint)
         self.checker = EquivalenceChecker()
@@ -288,6 +333,50 @@ class HybridOptimizer:
 
         # Revert to pre-rewrite original block
         return original, False, result
+
+    # -- Stage 4 over all blocks (serial or parallel) ---------------------------
+    def optimize_blocks(self, blocks: list[Block], workers: int | None = None) -> list[list[IntermediateRepresentation]]:
+        """Verified variants of every block, in block order. Public entry point (#46 -> #36).
+
+        ``workers`` overrides ``config.parallel_blocks``; 1 (or fewer than two blocks, or no ``fork``)
+        runs serially. Parallel results are merged in block order, so audit logs and counters match
+        the serial run; side effects on ``self`` (revert events, verification stats, solver time) are
+        applied exactly as the serial loop would.
+        """
+        n = resolve_workers(self.config.parallel_blocks if workers is None else workers)
+        self._workers_used = 1
+        if n <= 1 or len(blocks) < 2:
+            return [self._block_variants(b, idx) for idx, b in enumerate(blocks)]
+        try:
+            ctx = multiprocessing.get_context("fork")
+        except ValueError:
+            warnings.warn("parallel_blocks needs the 'fork' start method; running serially", RuntimeWarning, stacklevel=2)
+            return [self._block_variants(b, idx) for idx, b in enumerate(blocks)]
+        global _FORK_TARGET
+        _FORK_TARGET = self
+        budget = self._solver_left / len(blocks) if math.isfinite(self._solver_left) else math.inf
+        n = min(n, len(blocks))
+        try:
+            with ProcessPoolExecutor(max_workers=n, mp_context=ctx) as ex:
+                # contiguous chunks (4 per worker, for load balance) keep the merge in block order
+                size = max(1, -(-len(blocks) // (n * 4)))
+                items = list(enumerate(blocks))
+                futures = [ex.submit(_chunk_job, items[i:i + size], budget) for i in range(0, len(items), size)]
+                results = [r for f in futures for r in f.result()]
+        finally:
+            _FORK_TARGET = None
+        self._workers_used = n
+        out = []
+        for variants, events, unverified, calls, secs, skipped, spent in results:
+            out.append(variants)
+            self.revert_events.extend(events)
+            self._unverified |= unverified
+            self._verify_calls += calls
+            self._verify_s += secs
+            self._verify_skipped += skipped
+            self._solver_spent += spent
+            self._solver_left -= spent
+        return out
 
     # -- Stage 4 on one block -------------------------------------------------
     def _optimize_block(self, block: Block, block_idx: int = 0) -> IntermediateRepresentation:
@@ -427,6 +516,7 @@ class HybridOptimizer:
         verified = True
         rewards: list[float] = []
         variants: list[list[IntermediateRepresentation]] = []
+        block_stage_s, workers_used = 0.0, 1
 
         for iteration in range(max(self.config.feedback_iterations, 1)):
             blocks = schedule_blocks(
@@ -437,7 +527,10 @@ class HybridOptimizer:
                     backend=self.config.partition_backend,
                 ),
             )
-            variants = [self._block_variants(b, idx) for idx, b in enumerate(blocks)]
+            t_blocks = time.perf_counter()
+            variants = self.optimize_blocks(blocks)
+            block_stage_s += time.perf_counter() - t_blocks
+            workers_used = max(workers_used, self._workers_used)
             for idx, (b, v) in enumerate(zip(blocks, variants)):
                 self._emit_reward(iteration, idx, b.ir, v[0])
 
@@ -490,6 +583,8 @@ class HybridOptimizer:
             verification_calls=self._verify_calls,
             verification_s=self._verify_s,
             verifications_skipped=self._verify_skipped,
+            parallel_workers=workers_used,
+            block_stage_s=block_stage_s,
         )
 
 

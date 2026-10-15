@@ -1,0 +1,260 @@
+{
+ "seeds": [
+  0,
+  1
+ ],
+ "sets": {
+  "heldout_5q": 40,
+  "bench_5-6": 6,
+  "bench_8-12": 7,
+  "bench_16-20": 6
+ },
+ "results": {
+  "stub": {
+   "heldout_5q": {
+    "seeds": [
+     {
+      "n": 40,
+      "reward": 0.04553954874740551,
+      "depth_red_pct": 2.2527089783281733,
+      "gate_red_pct": 8.899820704235832
+     }
+    ],
+    "reward": 0.04553954874740551,
+    "reward_std": 0.0,
+    "depth_red_pct": 2.2527089783281733,
+    "depth_red_pct_std": 0.0,
+    "gate_red_pct": 8.899820704235832,
+    "gate_red_pct_std": 0.0
+   },
+   "bench_5-6": {
+    "seeds": [
+     {
+      "n": 6,
+      "reward": 0.0436255654655766,
+      "depth_red_pct": 4.035087719298246,
+      "gate_red_pct": 6.346254901168197
+     }
+    ],
+    "reward": 0.0436255654655766,
+    "reward_std": 0.0,
+    "depth_red_pct": 4.035087719298246,
+    "depth_red_pct_std": 0.0,
+    "gate_red_pct": 6.346254901168197,
+    "gate_red_pct_std": 0.0
+   },
+   "bench_8-12": {
+    "seeds": [
+     {
+      "n": 7,
+      "reward": 0.01905796055319348,
+      "depth_red_pct": 0.8625702655553402,
+      "gate_red_pct": 3.6487322201607917
+     }
+    ],
+    "reward": 0.01905796055319348,
+    "reward_std": 0.0,
+    "depth_red_pct": 0.8625702655553402,
+    "depth_red_pct_std": 0.0,
+    "gate_red_pct": 3.6487322201607917,
+    "gate_red_pct_std": 0.0
+   },
+   "bench_16-20": {
+    "seeds": [
+     {
+      "n": 6,
+      "reward": 0.019840950191132776,
+      "depth_red_pct": 1.6566063044936286,
+      "gate_red_pct": 3.217240684793555
+     }
+    ],
+    "reward": 0.019840950191132776,
+    "reward_std": 0.0,
+    "depth_red_pct": 1.6566063044936286,
+    "depth_red_pct_std": 0.0,
+    "gate_red_pct": 3.217240684793555,
+    "gate_red_pct_std": 0.0
+   }
+  },
+  "proxy": {
+   "heldout_5q": {
+    "seeds": [
+     {
+      "n": 40,
+      "reward": 0.0820545725431347,
+      "depth_red_pct": 9.021452221239374,
+      "gate_red_pct": 11.157533660472101
+     },
+     {
+      "n": 40,
+      "reward": 0.08094346143202359,
+      "depth_red_pct": 8.743674443461597,
+      "gate_red_pct": 11.157533660472101
+     }
+    ],
+    "reward": 0.08149901698757914,
+    "reward_std": 0.0005555555555555522,
+    "depth_red_pct": 8.882563332350486,
+    "depth_red_pct_std": 0.1388888888888884,
+    "gate_red_pct": 11.157533660472101,
+    "gate_red_pct_std": 0.0
+   },
+   "bench_5-6": {
+    "seeds": [
+     {
+      "n": 6,
+      "reward": 0.07924866669095647,
+      "depth_red_pct": 11.45711500974659,
+      "gate_red_pct": 7.679507390490049
+     },
+     {
+      "n": 6,
+      "reward": 0.08295237039466016,
+      "depth_red_pct": 12.383040935672517,
+      "gate_red_pct": 7.679507390490049
+     }
+    ],
+    "reward": 0.08110051854280831,
+    "reward_std": 0.0018518518518518476,
+    "depth_red_pct": 11.920077972709553,
+    "depth_red_pct_std": 0.4629629629629637,
+    "gate_red_pct": 7.679507390490049,
+    "gate_red_pct_std": 0.0
+   },
+   "bench_8-12": {
+    "seeds": [
+     {
+      "n": 7,
+      "reward": 0.03776448641324901,
+      "depth_red_pct": 5.049593855564005,
+      "gate_red_pct": 4.116419294990723
+     },
+     {
+      "n": 7,
+      "reward": 0.0415495901983528,
+      "depth_red_pct": 5.995869801839952,
+      "gate_red_pct": 4.116419294990723
+     }
+    ],
+    "reward": 0.039657038305800904,
+    "reward_std": 0.0018925518925518928,
+    "depth_red_pct": 5.522731828701978,
+    "depth_red_pct_std": 0.47313797313797323,
+    "gate_red_pct": 4.116419294990723,
+    "gate_red_pct_std": 0.0
+   },
+   "bench_16-20": {
+    "seeds": [
+     {
+      "n": 6,
+      "reward": 0.04248273196061536,
+      "depth_red_pct": 6.712776659959759,
+      "gate_red_pct": 3.796294058408862
+     },
+     {
+      "n": 6,
+      "reward": 0.03359384307172646,
+      "depth_red_pct": 4.490554437737536,
+      "gate_red_pct": 3.796294058408862
+     }
+    ],
+    "reward": 0.038038287516170916,
+    "reward_std": 0.004444444444444449,
+    "depth_red_pct": 5.601665548848647,
+    "depth_red_pct_std": 1.1111111111111112,
+    "gate_red_pct": 3.796294058408862,
+    "gate_red_pct_std": 0.0
+   }
+  },
+  "pipeline": {
+   "heldout_5q": {
+    "seeds": [
+     {
+      "n": 40,
+      "reward": 0.0820545725431347,
+      "depth_red_pct": 9.021452221239374,
+      "gate_red_pct": 11.157533660472101
+     },
+     {
+      "n": 40,
+      "reward": 0.0820545725431347,
+      "depth_red_pct": 9.021452221239374,
+      "gate_red_pct": 11.157533660472101
+     }
+    ],
+    "reward": 0.0820545725431347,
+    "reward_std": 0.0,
+    "depth_red_pct": 9.021452221239374,
+    "depth_red_pct_std": 0.0,
+    "gate_red_pct": 11.157533660472101,
+    "gate_red_pct_std": 0.0
+   },
+   "bench_5-6": {
+    "seeds": [
+     {
+      "n": 6,
+      "reward": 0.07924866669095647,
+      "depth_red_pct": 11.45711500974659,
+      "gate_red_pct": 7.679507390490049
+     },
+     {
+      "n": 6,
+      "reward": 0.07961903706132684,
+      "depth_red_pct": 11.549707602339183,
+      "gate_red_pct": 7.679507390490049
+     }
+    ],
+    "reward": 0.07943385187614166,
+    "reward_std": 0.00018518518518518406,
+    "depth_red_pct": 11.503411306042885,
+    "depth_red_pct_std": 0.046296296296296724,
+    "gate_red_pct": 7.679507390490049,
+    "gate_red_pct_std": 0.0
+   },
+   "bench_8-12": {
+    "seeds": [
+     {
+      "n": 7,
+      "reward": 0.03776448641324901,
+      "depth_red_pct": 5.049593855564005,
+      "gate_red_pct": 4.116419294990723
+     },
+     {
+      "n": 7,
+      "reward": 0.03654348519224778,
+      "depth_red_pct": 4.7443435503137,
+      "gate_red_pct": 4.116419294990723
+     }
+    ],
+    "reward": 0.037153985802748396,
+    "reward_std": 0.0006105006105006153,
+    "depth_red_pct": 4.896968702938853,
+    "depth_red_pct_std": 0.15262515262515253,
+    "gate_red_pct": 4.116419294990723,
+    "gate_red_pct_std": 0.0
+   },
+   "bench_16-20": {
+    "seeds": [
+     {
+      "n": 6,
+      "reward": 0.03914939862728203,
+      "depth_red_pct": 5.879443326626426,
+      "gate_red_pct": 3.796294058408862
+     },
+     {
+      "n": 6,
+      "reward": 0.03914939862728203,
+      "depth_red_pct": 5.879443326626426,
+      "gate_red_pct": 3.796294058408862
+     }
+    ],
+    "reward": 0.03914939862728203,
+    "reward_std": 0.0,
+    "depth_red_pct": 5.879443326626426,
+    "depth_red_pct_std": 0.0,
+    "gate_red_pct": 3.796294058408862,
+    "gate_red_pct_std": 0.0
+   }
+  }
+ }
+}

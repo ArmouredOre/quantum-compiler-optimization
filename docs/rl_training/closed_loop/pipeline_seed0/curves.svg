@@ -1,0 +1,49 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="320" viewBox="0 0 1000 320" font-family="sans-serif"><rect width="1000" height="320" fill="white"/><text x="60" y="30" font-size="13" font-weight="600" fill="#222">Episode return (proxy reward)</text>
+<rect x="60" y="40" width="270" height="220" fill="none" stroke="#bbb"/>
+<line x1="60" x2="330" y1="260.0" y2="260.0" stroke="#eee"/>
+<text x="54" y="264.0" font-size="10" text-anchor="end" fill="#555">-1.47</text>
+<line x1="60" x2="330" y1="205.0" y2="205.0" stroke="#eee"/>
+<text x="54" y="209.0" font-size="10" text-anchor="end" fill="#555">-0.84</text>
+<line x1="60" x2="330" y1="150.0" y2="150.0" stroke="#eee"/>
+<text x="54" y="154.0" font-size="10" text-anchor="end" fill="#555">-0.21</text>
+<line x1="60" x2="330" y1="95.0" y2="95.0" stroke="#eee"/>
+<text x="54" y="99.0" font-size="10" text-anchor="end" fill="#555">0.42</text>
+<line x1="60" x2="330" y1="40.0" y2="40.0" stroke="#eee"/>
+<text x="54" y="44.0" font-size="10" text-anchor="end" fill="#555">1.06</text>
+<text x="195.0" y="288" font-size="11" text-anchor="middle" fill="#555">timesteps (reward)</text>
+<polyline fill="none" stroke="#2a6fdb" stroke-width="2" points="60.0,244.8 67.2,228.6 74.3,180.3 81.4,153.3 88.4,130.7 95.5,108.7 102.5,97.8 109.6,88.9 116.6,73.4 123.7,76.4 130.7,72.0 137.8,68.7 145.0,65.1 152.1,64.7 159.2,64.1 166.3,61.4 173.4,60.4 180.6,68.7 187.6,63.4 194.7,59.4 201.8,66.2 208.9,62.6 216.1,62.2 223.2,59.9 230.2,55.2 237.3,63.8 244.3,61.9 251.6,60.5 258.7,61.5 265.8,61.4 272.9,56.0 280.0,60.2 287.1,62.4 294.4,58.7 301.5,60.7 308.8,61.1 315.9,62.0 322.9,56.2 330.0,67.4"/>
+<text x="68" y="54" font-size="10" fill="#2a6fdb">train</text>
+<text x="385" y="30" font-size="13" font-weight="600" fill="#222">Depth reduction %</text>
+<rect x="385" y="40" width="270" height="220" fill="none" stroke="#bbb"/>
+<line x1="385" x2="655" y1="260.0" y2="260.0" stroke="#eee"/>
+<text x="379" y="264.0" font-size="10" text-anchor="end" fill="#555">-14.63</text>
+<line x1="385" x2="655" y1="205.0" y2="205.0" stroke="#eee"/>
+<text x="379" y="209.0" font-size="10" text-anchor="end" fill="#555">-7.11</text>
+<line x1="385" x2="655" y1="150.0" y2="150.0" stroke="#eee"/>
+<text x="379" y="154.0" font-size="10" text-anchor="end" fill="#555">0.41</text>
+<line x1="385" x2="655" y1="95.0" y2="95.0" stroke="#eee"/>
+<text x="379" y="99.0" font-size="10" text-anchor="end" fill="#555">7.93</text>
+<line x1="385" x2="655" y1="40.0" y2="40.0" stroke="#eee"/>
+<text x="379" y="44.0" font-size="10" text-anchor="end" fill="#555">15.44</text>
+<text x="520.0" y="288" font-size="11" text-anchor="middle" fill="#555">timesteps (%)</text>
+<polyline fill="none" stroke="#2a6fdb" stroke-width="2" points="385.0,244.8 392.2,230.2 399.3,194.6 406.4,173.3 413.4,155.7 420.5,138.9 427.5,130.2 434.6,123.6 441.6,113.6 448.7,116.2 455.7,113.5 462.8,110.2 470.0,107.0 477.1,107.2 484.2,106.7 491.3,104.5 498.4,102.8 505.6,110.5 512.6,105.0 519.7,103.0 526.8,108.4 533.9,104.2 541.1,105.3 548.2,103.2 555.2,99.0 562.3,107.2 569.3,104.4 576.6,103.7 583.7,103.7 590.8,104.5 597.9,101.7 605.0,102.5 612.1,104.4 619.4,102.9 626.5,103.9 633.8,104.4 640.9,105.6 647.9,100.5 655.0,109.2"/>
+<text x="393" y="54" font-size="10" fill="#2a6fdb">train</text>
+<polyline fill="none" stroke="#d9822b" stroke-width="2" points="413.4,65.4 448.7,62.0 484.2,55.2 519.7,55.2 555.2,55.2 590.8,55.2 626.5,55.2"/>
+<text x="503" y="54" font-size="10" fill="#d9822b">eval</text>
+<text x="710" y="30" font-size="13" font-weight="600" fill="#222">Gate-count reduction %</text>
+<rect x="710" y="40" width="270" height="220" fill="none" stroke="#bbb"/>
+<line x1="710" x2="980" y1="260.0" y2="260.0" stroke="#eee"/>
+<text x="704" y="264.0" font-size="10" text-anchor="end" fill="#555">-0.99</text>
+<line x1="710" x2="980" y1="205.0" y2="205.0" stroke="#eee"/>
+<text x="704" y="209.0" font-size="10" text-anchor="end" fill="#555">2.61</text>
+<line x1="710" x2="980" y1="150.0" y2="150.0" stroke="#eee"/>
+<text x="704" y="154.0" font-size="10" text-anchor="end" fill="#555">6.21</text>
+<line x1="710" x2="980" y1="95.0" y2="95.0" stroke="#eee"/>
+<text x="704" y="99.0" font-size="10" text-anchor="end" fill="#555">9.81</text>
+<line x1="710" x2="980" y1="40.0" y2="40.0" stroke="#eee"/>
+<text x="704" y="44.0" font-size="10" text-anchor="end" fill="#555">13.41</text>
+<text x="845.0" y="288" font-size="11" text-anchor="middle" fill="#555">timesteps (%)</text>
+<polyline fill="none" stroke="#2a6fdb" stroke-width="2" points="710.0,244.8 717.2,244.8 724.3,244.8 731.4,244.8 738.4,244.8 745.5,244.8 752.5,244.8 759.6,244.8 766.6,244.8 773.7,244.8 780.7,244.8 787.8,244.8 795.0,244.8 802.1,244.8 809.2,244.8 816.3,244.8 823.4,244.8 830.6,244.8 837.6,244.8 844.7,244.8 851.8,244.8 858.9,244.8 866.1,244.8 873.2,244.8 880.2,244.8 887.3,244.8 894.3,244.8 901.6,244.8 908.7,244.8 915.8,244.8 922.9,244.8 930.0,244.8 937.1,244.8 944.4,244.8 951.5,244.8 958.8,244.8 965.9,244.8 972.9,244.8 980.0,244.8"/>
+<text x="718" y="54" font-size="10" fill="#2a6fdb">train</text>
+<polyline fill="none" stroke="#d9822b" stroke-width="2" points="738.4,55.2 773.7,55.2 809.2,55.2 844.7,55.2 880.2,55.2 915.8,55.2 951.5,55.2"/>
+<text x="828" y="54" font-size="10" fill="#d9822b">eval</text></svg>

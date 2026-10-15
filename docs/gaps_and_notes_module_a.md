@@ -222,3 +222,9 @@ Full write-up: [`sprint2_report_module_a.md`](sprint2_report_module_a.md). Gaps 
 ---
 # Sprint 3 / N4 addendum (#26, #29)
 See [`sprint3_report_module_a.md`](sprint3_report_module_a.md). Gaps: (1) calibration only reaches the reward through gate counts, so per-backend learning needs the opt-in `RewardWeights.time` term; (2) per-backend policies differ but do not reliably win on their own backend with the current illustrative profiles; (3) 10/20-qubit outputs are not equivalence-checked (numeric cap 8 qubits); (4) SB3 models are now usable via `RLScheduler`, `.zip` load needs the `rl` extra.
+
+## Sprint 4 additions (#35, #46)
+- Real Stage 6 reward is not measurably better than the proxy (2 seeds, 40k steps); see `docs/sprint4_report_module_a.md`.
+- Default pipeline now loads the trained agent; CR already removes the rule-proven cancellations Module B would find.
+- Parallel blocks: slower without resynthesis; with a binding time budget results can differ from serial (`docs/parallel_blocks.md`).
+- Partitioner: greedy ignores `max_block_gates` above ~32 (width cap); METIS not benchmarked.

@@ -125,6 +125,7 @@ class SchedulerEnv:
         reduction: bool = False,
         cr_window: int | None = None,
         stop_on_noop: bool = False,
+        terminal_reward_fn=None,
     ):
         self.initial = circuit.copy()
         self.weights = weights or RewardWeights()
@@ -137,6 +138,11 @@ class SchedulerEnv:
         self.reduction = reduction
         self.cr_window = cr_window
         self.stop_on_noop = stop_on_noop
+        # Opt-in closed loop (#35): ``fn(original, final) -> float`` replaces the local proxy
+        # terminal bonus with a Stage 6 reward measured through the real pipeline (see
+        # ``closed_loop.PipelineReward``). The bonus is taken *relative to the CR-only
+        # reference* so, like the proxy, the agent is credited only for what it adds.
+        self.terminal_reward_fn = terminal_reward_fn
         self._start_episode()
 
     def _start_episode(self) -> None:
@@ -255,11 +261,16 @@ class SchedulerEnv:
 
         terminated = (self.stop_on_noop and action.kind == ActionKind.NOOP) or self._is_fixed_point()
         truncated = self._steps >= self.max_episode_steps
+        terminal_bonus = 0.0
         if terminated or truncated:
             self._done = True
-            reward += self.weights.terminal * scalarized_reward(
-                self.reference, self.circuit, calibration=self.calibration
-            )
+            if self.terminal_reward_fn is not None:
+                terminal_bonus = self.terminal_reward_fn(self.initial, self.circuit) - self.terminal_reward_fn(
+                    self.initial, self.reference
+                )
+            else:
+                terminal_bonus = scalarized_reward(self.reference, self.circuit, calibration=self.calibration)
+            reward += self.weights.terminal * terminal_bonus
 
         info = {
             "legal_actions": self.legal_actions(),
@@ -267,6 +278,7 @@ class SchedulerEnv:
             "d_depth": d_depth,
             "d_fidelity": d_fidelity,
             "d_time": d_time,
+            "terminal_reward": terminal_bonus,
             "cr_removed": cr_removed,
         }
         return self.observation(), reward, terminated, truncated, info

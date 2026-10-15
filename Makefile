@@ -43,3 +43,12 @@ train-rl-smoke:
 clean:
 	rm -rf build dist *.egg-info src/*.egg-info .pytest_cache .mypy_cache .ruff_cache
 	find . -name "__pycache__" -type d -exec rm -rf {} +
+
+eval-closed-loop:  ## #35: proxy vs real-reward training and end-to-end eval (slow)
+	python scripts/eval_closed_loop.py --stage all --seeds 0 1 --timesteps 40000 --out docs/rl_training/closed_loop
+
+tune-partition:  ## #46: partitioner tuning table
+	python benchmarks/tune_partition.py --downstream --out docs/partitioner_tuning.md
+
+bench-parallel:  ## #46: serial vs parallel block stage
+	python benchmarks/bench_parallel.py --workers 1 2
