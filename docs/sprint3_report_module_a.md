@@ -31,17 +31,17 @@ Trained on generated 5-qubit circuits (disjoint from `benchmarks/`), 100k steps,
 ## #29 — per-backend policies (`docs/rl_training/backend_matrix.md`)
 **Finding that changes the plan:** the issue says no environment change is needed because the reward already takes `calibration`. It does, but only through estimated fidelity, which depends on gate *counts*; COMMUTE moves change no counts, so the learned reward (and policy) is backend-independent. I therefore added two opt-in pieces (defaults keep old behaviour): `RewardWeights.time` (per-step drop in calibrated critical-path time, in average-layer units) and `RLConfig.lookahead_metric="time"`.
 
-Result (60 held-out 5q circuits, 3 seeds, mean ± std of execution-time reduction % under the test backend):
+Result (60 held-out 5q circuits, **7 seeds**, 60k steps; mean ± std of execution-time reduction % under the test backend; `backend_matrix.md`):
 
 | test \ train | ibm_like | trapped_ion_like | greedy time heuristic |
 |---|---|---|---|
-| ibm_like | **8.02 ± 0.31** | 7.54 ± 0.41 | 7.62 |
-| trapped_ion_like | 7.61 ± 0.47 | **7.09 ± 0.23** | 7.33 |
+| ibm_like | **8.01 ± 0.35** | 7.48 ± 0.43 | 7.62 |
+| trapped_ion_like | 7.51 ± 0.42 | **7.14 ± 0.36** | 7.33 |
 
-* Schedules differ between the two backends' policies in 25 % of cases, so the policies are measurably different.
-* But the ion-like policy does **not** win on its own backend (7.09 vs 7.61), and the ibm-like one wins by 0.5 with seed std ≈ 0.4; own-backend policy beat the other in 2/3 and 1/3 seeds. This is within seed noise: **acceptance criterion 2 is not demonstrated.**
-* Likely cause: the two profiles differ mostly by scale, and one-step calibrated-time lookahead already captures most of the gain on 5-qubit circuits, so little backend-specific behaviour is left to learn. A quick exploratory run with deliberately extreme synthetic profiles (not committed) also showed only ~0.2 point own-backend gains.
-* What would likely change it: profiles with different *structure* (connectivity/SWAP cost, native gate sets), larger circuits, multi-step credit assignment. Suggest agreeing with the issue owner whether to relax the criterion to "measurably different schedules + matrix reported honestly".
+* Schedules differ between the two backends' policies in 21 % of cases: measurably different.
+* The ibm-like policy wins on its own backend robustly (6/7 seeds, +0.5 points, and beats the greedy time heuristic). The ion-like policy does **not**: it loses on its own backend (7.14 vs 7.51; own policy better in 2/7 seeds). In fact it is the weaker policy in *both* columns, i.e. a training-quality difference rather than specialization. **Acceptance criterion 2 is therefore not met.**
+* Why it is hard: a policy trained on A and run on B gets B's calibrated lookahead as an input, so it adapts to B through its features; the remaining backend-specific behaviour is small. I also tried hiding the lookahead (`--no-lookahead`, 100k steps, 3 seeds, `backend_matrix_nolookahead.md`): policies then only reach ~2-3 % (vs ~7.5-8 %) and still do not specialize (ion-like again loses its own column).
+* What would likely change it: profiles that differ in structure (connectivity / SWAP cost, native gate sets) rather than scale, larger circuits, or multi-step credit assignment. Recommendation: relax the criterion to "measurably different schedules + matrix reported", or scope a follow-up with structurally different profiles; I did not tune the result to force a win.
 
 ## How to run / test
 ```bash

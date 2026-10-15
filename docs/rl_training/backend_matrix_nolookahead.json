@@ -1,0 +1,69 @@
+{
+ "profiles": [
+  "superconducting_ibm_like",
+  "trapped_ion_like"
+ ],
+ "seeds": [
+  0,
+  1,
+  2
+ ],
+ "n_circuits": 60,
+ "matrix": {
+  "superconducting_ibm_like": {
+   "superconducting_ibm_like": {
+    "mean": 3.4342408271582245,
+    "std_over_seeds": 1.7768766345254652,
+    "per_seed": [
+     2.2910601943452122,
+     5.943817054776354,
+     2.0678452323531076
+    ]
+   },
+   "trapped_ion_like": {
+    "mean": 2.2005320346183246,
+    "std_over_seeds": 0.1109874336434894,
+    "per_seed": [
+     2.043572100706718,
+     2.2790120015741278,
+     2.2790120015741278
+    ]
+   },
+   "greedy_time": {
+    "mean": 7.624534817064988
+   }
+  },
+  "trapped_ion_like": {
+   "superconducting_ibm_like": {
+    "mean": 3.0977658857239643,
+    "std_over_seeds": 1.8020557277628162,
+    "per_seed": [
+     1.9425402460146022,
+     5.642660474914886,
+     1.7080969362424043
+    ]
+   },
+   "trapped_ion_like": {
+    "mean": 1.8604206663391565,
+    "std_over_seeds": 0.11192565437775898,
+    "per_seed": [
+     1.7021338879406462,
+     1.9395640555384117,
+     1.9395640555384117
+    ]
+   },
+   "greedy_time": {
+    "mean": 7.326028207922963
+   }
+  }
+ },
+ "wins_own_backend": {
+  "superconducting_ibm_like": true,
+  "trapped_ion_like": false
+ },
+ "own_wins_per_seed": {
+  "superconducting_ibm_like": 2,
+  "trapped_ion_like": 1
+ },
+ "fraction_schedules_differ": 0.3333333333333333
+}
