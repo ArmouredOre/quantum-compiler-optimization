@@ -1,0 +1,16 @@
+# Module A — full Sprint 2 training run on 5-qubit circuits (built-in PPO).
+# ~1-2 min with numpy installed; pure Python is ~10x slower but works.
+algo: ppo
+backend: builtin
+seed: 0
+total_timesteps: 60000
+train_qubits: [5]
+eval_qubits: [10, 20, 40]
+commutation: full
+deterministic_reduction: true
+n_steps: 1024
+epochs: 4
+minibatch: 64
+lr: 0.003
+eval_every: 5
+checkpoint_every: 5
