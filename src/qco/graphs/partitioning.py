@@ -17,12 +17,17 @@ so each one stays small enough for exact re-synthesis and dense verification
 Contract (all backends): every gate is in exactly one block, and concatenating
 the blocks in list order keeps every qubit's gate order - so the stitched
 circuit equals the input and per-block rewrites compose (N3 block crossover).
+schedule_blocks / stitch_blocks enforce that contract for any block list: they validate exactly-once coverage and reorder blocks by dependency.
 """
 
 from __future__ import annotations
 
+import heapq
 import os
 import tempfile
+from collections import Counter
+from collections.abc import Sequence
+from dataclasses import dataclass, field, replace
 from collections import Counter
 from dataclasses import dataclass, field
 
@@ -156,9 +161,15 @@ def _greedy_blocks(
     return _make_blocks(ir, emitted)
 
 
-def _make_blocks(ir: IntermediateRepresentation, groups: list[list[int]]) -> list[Block]:
+def _boundaries(ir: IntermediateRepresentation, groups: list[list[int]]) -> list[frozenset[int]]:
+    """Per group: qubits it shares with at least one other group."""
     touched = [{q for g in grp for q in ir.gates[g].qubits} for grp in groups]
     shared = Counter(q for t in touched for q in t)
+    return [frozenset(q for q in t if shared[q] > 1) for t in touched]
+
+
+def _make_blocks(ir: IntermediateRepresentation, groups: list[list[int]]) -> list[Block]:
+    bounds = _boundaries(ir, groups)
     return [
         Block(
             index=i,
@@ -168,10 +179,95 @@ def _make_blocks(ir: IntermediateRepresentation, groups: list[list[int]]) -> lis
                 name=f"{ir.name}#block{i}",
             ),
             source_gate_ids=grp,
-            boundary_qubits=frozenset(q for q in t if shared[q] > 1),
+            boundary_qubits=bounds[i],
         )
-        for i, (grp, t) in enumerate(zip(groups, touched))
+        for i, grp in enumerate(groups)
     ]
+
+
+def _schedule_order(ir: IntermediateRepresentation, blocks: Sequence[Block]) -> list[int]:
+    """Positions of ``blocks`` in a valid dependency order.
+
+    Validates exactly-once coverage, then runs Kahn's algorithm on the block
+    graph (edge A -> B if a gate in B depends on a gate in A). Ties go to the
+    smallest input position, so a list that is already in a valid order comes
+    back unchanged. Raises ValueError on bad coverage or a cycle (a cycle means
+    some block is non-convex in the gate DAG).
+    """
+    n = len(ir.gates)
+    owner = [-1] * n
+    for pos, b in enumerate(blocks):
+        ids = b.source_gate_ids
+        if not ids:
+            raise ValueError(f"block {pos} is empty")
+        if any(x >= y for x, y in zip(ids, ids[1:])):
+            raise ValueError(f"block {pos}: source_gate_ids must be strictly increasing")
+        for g in ids:
+            if not 0 <= g < n:
+                raise ValueError(f"block {pos}: gate id {g} out of range")
+            if owner[g] != -1:
+                raise ValueError(f"gate {g} is in blocks {owner[g]} and {pos}")
+            owner[g] = pos
+    missing = [g for g in range(n) if owner[g] == -1]
+    if missing:
+        raise ValueError(f"{len(missing)} gate(s) in no block, e.g. {missing[:5]}")
+
+    succ: list[set[int]] = [set() for _ in blocks]
+    indeg = [0] * len(blocks)
+    for u, vs in build_dag(ir).succ.items():
+        for v in vs:
+            a, b = owner[u], owner[v]
+            if a != b and b not in succ[a]:
+                succ[a].add(b)
+                indeg[b] += 1
+
+    ready = [p for p, d in enumerate(indeg) if d == 0]
+    heapq.heapify(ready)
+    order: list[int] = []
+    while ready:
+        p = heapq.heappop(ready)
+        order.append(p)
+        for s in succ[p]:
+            indeg[s] -= 1
+            if indeg[s] == 0:
+                heapq.heappush(ready, s)
+    if len(order) != len(blocks):
+        stuck = sorted(set(range(len(blocks))) - set(order))
+        raise ValueError(f"cyclic block dependencies (non-convex blocks): positions {stuck}")
+    return order
+
+
+def schedule_blocks(ir: IntermediateRepresentation, blocks: Sequence[Block]) -> list[Block]:
+    """Blocks in dependency order, with ``index`` renumbered to the new position
+    and ``boundary_qubits`` recomputed from ``source_gate_ids``."""
+    scheduled = [blocks[p] for p in _schedule_order(ir, blocks)]
+    bounds = _boundaries(ir, [b.source_gate_ids for b in scheduled])
+    return [replace(b, index=i, boundary_qubits=bounds[i]) for i, b in enumerate(scheduled)]
+
+
+def stitch_blocks(
+    ir: IntermediateRepresentation,
+    blocks: Sequence[Block],
+    rewritten: Sequence[IntermediateRepresentation] | None = None,
+) -> IntermediateRepresentation:
+    """Concatenate blocks into one circuit in dependency order.
+
+    ``rewritten[i]`` replaces ``blocks[i].ir`` (indexed by the position in
+    ``blocks``, not by schedule order). A rewrite must stay on its block's
+    qubits; that is what makes dependency order sufficient for correctness.
+    """
+    if rewritten is not None and len(rewritten) != len(blocks):
+        raise ValueError(f"{len(rewritten)} rewrites for {len(blocks)} blocks")
+    out = IntermediateRepresentation(num_qubits=ir.num_qubits, name=ir.name)
+    for pos in _schedule_order(ir, blocks):
+        piece = blocks[pos].ir if rewritten is None else rewritten[pos]
+        if rewritten is not None:
+            allowed = {q for g in blocks[pos].source_gate_ids for q in ir.gates[g].qubits}
+            used = {q for g in piece.gates for q in g.qubits}
+            if not used <= allowed:
+                raise ValueError(f"rewrite of block {pos} touches qubits {sorted(used - allowed)} outside the block")
+        out.gates.extend(piece.gates)
+    return out
 
 
 def _fallback_partition(ir: IntermediateRepresentation, max_block_gates: int) -> list[Block]:

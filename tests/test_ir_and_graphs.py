@@ -255,3 +255,71 @@ def test_greedy_bounds_width_at_modest_cut_cost():
     widths = [len({q for g in b.ir for q in g.qubits}) for b in greedy]
     assert max(widths) <= 8
     assert cut_size(ir, greedy) <= 2 * cut_size(ir, partition_circuit(ir, backend="fallback"))
+
+from qco.graphs.partitioning import _make_blocks, schedule_blocks, stitch_blocks
+from qco.modules.smt_verifier.equivalence import EquivalenceChecker
+
+
+def _per_wire(ir):
+    return {q: [(g.name, g.qubits, g.params) for g in ir.gates if q in g.qubits]
+            for q in range(ir.num_qubits)}
+
+
+@pytest.mark.parametrize("backend", ["auto", "fallback", "metis"])
+@pytest.mark.parametrize("path", BENCHMARKS)
+def test_partition_schedule_stitch_equivalent(path, backend):
+    if backend == "metis":
+        pytest.importorskip("pymetis")
+    ir = parse(path)
+    if ir.num_qubits > 8:
+        pytest.skip("dense equivalence only up to 8 qubits")
+    blocks = schedule_blocks(
+        ir, partition_circuit(ir, max_block_gates=8, backend=backend, max_block_qubits=4)
+    )
+    _check_blocks(ir, blocks, 8, None if backend == "fallback" else 4)  # exactly once, wire order, boundaries
+    assert [b.index for b in blocks] == list(range(len(blocks)))
+    stitched = stitch_blocks(ir, blocks)
+    assert _per_wire(stitched) == _per_wire(ir)
+    assert EquivalenceChecker().check(ir, stitched).equivalent
+
+
+def test_schedule_reorders_out_of_order_blocks():
+    ir = IntermediateRepresentation(3).add("h", [0]).add("cx", [0, 1]).add("cx", [1, 2])
+    blocks = schedule_blocks(ir, _make_blocks(ir, [[2], [0], [1]]))
+    assert [b.source_gate_ids for b in blocks] == [[0], [1], [2]]
+    assert [b.index for b in blocks] == [0, 1, 2]
+    assert blocks[0].boundary_qubits == frozenset({0})
+    assert blocks[1].boundary_qubits == frozenset({0, 1})
+    assert _per_wire(stitch_blocks(ir, _make_blocks(ir, [[2], [0], [1]]))) == _per_wire(ir)
+
+
+def test_schedule_is_identity_on_valid_order():
+    ir = IntermediateRepresentation(2).add("h", [0]).add("h", [1]).add("x", [0])
+    blocks = _make_blocks(ir, [[1], [0, 2]])  # independent blocks, deliberately not min-id order
+    assert [b.source_gate_ids for b in schedule_blocks(ir, blocks)] == [[1], [0, 2]]
+
+
+def test_schedule_rejects_non_convex_block():
+    ir = IntermediateRepresentation(2).add("h", [0]).add("cx", [0, 1]).add("x", [0])
+    with pytest.raises(ValueError, match="cyclic"):
+        schedule_blocks(ir, _make_blocks(ir, [[0, 2], [1]]))
+
+
+def test_schedule_rejects_bad_coverage():
+    ir = IntermediateRepresentation(2).add("h", [0]).add("x", [1]).add("t", [1])
+    with pytest.raises(ValueError, match="in blocks"):
+        schedule_blocks(ir, _make_blocks(ir, [[0, 1], [1, 2]]))
+    with pytest.raises(ValueError, match="in no block"):
+        schedule_blocks(ir, _make_blocks(ir, [[0], [1]]))
+
+
+def test_stitch_rewritten_blocks_equivalent_and_confined():
+    ir = IntermediateRepresentation(2).add("h", [0]).add("h", [0]).add("cx", [0, 1])
+    blocks = _make_blocks(ir, [[0, 1], [2]])
+    stitched = stitch_blocks(ir, blocks, [IntermediateRepresentation(2), blocks[1].ir])  # h.h -> identity
+    assert len(stitched) == 1
+    assert EquivalenceChecker().check(ir, stitched).equivalent
+    stray = IntermediateRepresentation(2).add("x", [1])
+    with pytest.raises(ValueError, match="outside the block"):
+        stitch_blocks(ir, blocks, [stray, blocks[1].ir])
+        

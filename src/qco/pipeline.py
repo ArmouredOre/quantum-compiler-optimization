@@ -31,7 +31,7 @@ from types import SimpleNamespace
 from typing import Any, Callable
 
 from qco.evaluation.metrics import scalarized_reward
-from qco.graphs.partitioning import Block, partition_circuit
+from qco.graphs.partitioning import Block, partition_circuit, schedule_blocks, stitch_blocks
 from qco.ir.intermediate_representation import Gate, IntermediateRepresentation
 from qco.ir.parser import parse
 from qco.modules.evolutionary.nsga2 import NSGA2Compiler, ParetoPoint
@@ -352,7 +352,9 @@ class HybridOptimizer:
         if not self.config.enable_resynthesis or self._solver_left <= 0:
             return None
         rc = self.resynthesizer.config
-        windows = partition_circuit(ir, max_block_gates=rc.max_gates, max_block_qubits=rc.max_qubits)
+        windows = schedule_blocks(
+            ir, partition_circuit(ir, max_block_gates=rc.max_gates, max_block_qubits=rc.max_qubits)
+        )
         ranked = self._rank_windows(ir, windows)
         replaced: dict[int, IntermediateRepresentation] = {}
         for w in ranked:
@@ -374,10 +376,7 @@ class HybridOptimizer:
                 replaced[w.index] = new_ir
         if not replaced:
             return None
-        out = IntermediateRepresentation(ir.num_qubits, name=ir.name)
-        for w in windows:  # windows compose in list order (partitioner contract)
-            out.gates.extend(replaced.get(w.index, w.ir).gates)
-        return out
+        return stitch_blocks(ir, windows, [replaced.get(w.index, w.ir) for w in windows])
 
     def _rank_windows(self, ir: IntermediateRepresentation, windows: list[Block]) -> list[Block]:
         """Order windows for re-synthesis (N1); ties broken by size."""
@@ -430,19 +429,20 @@ class HybridOptimizer:
         variants: list[list[IntermediateRepresentation]] = []
 
         for iteration in range(max(self.config.feedback_iterations, 1)):
-            blocks = partition_circuit(
+            blocks = schedule_blocks(
                 circuit,
-                max_block_gates=self.config.max_block_gates,
-                backend=self.config.partition_backend,
+                partition_circuit(
+                    circuit,
+                    max_block_gates=self.config.max_block_gates,
+                    backend=self.config.partition_backend,
+                ),
             )
             variants = [self._block_variants(b, idx) for idx, b in enumerate(blocks)]
             for idx, (b, v) in enumerate(zip(blocks, variants)):
                 self._emit_reward(iteration, idx, b.ir, v[0])
 
-            # Stitch the best variant of each block, in partition order.
-            stitched = IntermediateRepresentation(num_qubits=circuit.num_qubits, name=circuit.name)
-            for v in variants:
-                stitched.gates.extend(v[0].gates)
+            # Stitch the best variant of each block, in dependency order.
+            stitched = stitch_blocks(circuit, blocks, [v[0] for v in variants])
 
             # Blocks compose by the partitioner's contract, so per-block checks
             # cover the whole circuit; the global check is a cheap extra when small.
