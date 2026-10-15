@@ -40,6 +40,7 @@ class RLConfig:
     commutation: str = "full"    # "disjoint" (Sprint 1) | "full" (provably-commuting gates may be reordered)
     max_episode_steps: int = 40
     calibration: str = "default"
+    hardware: str | None = None  # opt-in HardwareProfile name (topology / SWAP / native-gate costs); overrides `calibration`
     cr_window: int | None = None
     lookahead: bool = True       # give the policy the one-step improvement of each candidate move
     lookahead_metric: str = "depth"  # "depth" (backend-independent) | "time" (calibrated execution time; #29)
@@ -81,6 +82,10 @@ class RLConfig:
         from qco.evaluation.calibration import get_calibration
 
         get_calibration(self.calibration)  # raises KeyError listing valid profiles
+        if self.hardware is not None:
+            from qco.evaluation.hardware import get_hardware
+
+            get_hardware(self.hardware)
         if self.total_timesteps <= 0 or self.n_steps <= 0 or self.minibatch <= 0 or self.epochs <= 0:
             raise ValueError("total_timesteps, n_steps, minibatch and epochs must be positive")
         if self.max_episode_steps <= 0:

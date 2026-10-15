@@ -21,7 +21,6 @@ Global features (``GLOBAL_DIM`` = 7) feed the value function.
 
 from __future__ import annotations
 
-from qco.evaluation.metrics import execution_time
 from qco.ir.intermediate_representation import Gate, IntermediateRepresentation
 from qco.modules.rl_scheduler.rewrites import IllegalActionError, apply_action
 
@@ -76,9 +75,7 @@ def _lookahead(env, action) -> float:
     except IllegalActionError:
         return 0.0
     if getattr(env, "lookahead_metric", "depth") == "time":
-        delta = (
-            execution_time(env.circuit, env.calibration).value - execution_time(after, env.calibration).value
-        ) / env.time_unit
+        delta = (env.time_of(env.circuit) - env.time_of(after)) / env.time_unit
     else:
         delta = env.circuit.depth() - after.depth()
     return max(-_LOOKAHEAD_CLIP, min(_LOOKAHEAD_CLIP, float(delta))) / _LOOKAHEAD_CLIP

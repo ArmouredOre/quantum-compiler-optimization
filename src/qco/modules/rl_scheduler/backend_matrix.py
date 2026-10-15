@@ -19,6 +19,7 @@ import random
 from dataclasses import dataclass
 from statistics import mean, pstdev
 
+from qco.evaluation.hardware import HARDWARE_PROFILES, get_hardware, hardware_execution_time
 from qco.evaluation.metrics import execution_time
 from qco.ir.intermediate_representation import IntermediateRepresentation
 from qco.modules.rl_scheduler.baselines import greedy_depth_chooser, rollout
@@ -30,12 +31,22 @@ from qco.modules.rl_scheduler.training import train
 DEFAULT_PROFILES = ("superconducting_ibm_like", "trapped_ion_like")
 
 
+def retarget(config: RLConfig, name: str) -> RLConfig:
+    """``config`` pointed at backend ``name``: a ``HardwareProfile`` if it is one, else a ``Calibration``."""
+    d = config.to_dict()
+    if name in HARDWARE_PROFILES:
+        d.update(hardware=name, calibration=get_hardware(name).calibration)
+    else:
+        d.update(hardware=None, calibration=name)
+    return RLConfig.from_dict(d)
+
+
 def backend_config(base: RLConfig, calibration: str, seed: int, time_weight: float = 1.0) -> RLConfig:
-    """``base`` specialised to one device profile (time-aware reward + lookahead)."""
-    d = base.to_dict()
+    """``base`` specialised to one backend (a ``Calibration`` or ``HardwareProfile`` name): time-aware reward + lookahead."""
+    d = retarget(base, calibration).to_dict()
     w = dict(d["weights"])
     w.update(depth=0.0, time=time_weight)
-    d.update(calibration=calibration, lookahead_metric="time", weights=w, seed=seed)
+    d.update(lookahead_metric="time", weights=w, seed=seed)
     return RLConfig.from_dict(d)
 
 
@@ -57,9 +68,16 @@ def train_backend_policies(base: RLConfig, profiles=DEFAULT_PROFILES, seeds=(0, 
     return out
 
 
+def time_of(circuit: IntermediateRepresentation, backend: str) -> float:
+    """Execution time (ns) under a hardware profile or a calibration, whichever ``backend`` names."""
+    if backend in HARDWARE_PROFILES:
+        return hardware_execution_time(circuit, backend)
+    return execution_time(circuit, backend).value
+
+
 def time_reduction_pct(before: IntermediateRepresentation, after: IntermediateRepresentation, calibration: str) -> float:
-    t0 = execution_time(before, calibration).value
-    return 100.0 * (t0 - execution_time(after, calibration).value) / t0 if t0 else 0.0
+    t0 = time_of(before, calibration)
+    return 100.0 * (t0 - time_of(after, calibration)) / t0 if t0 else 0.0
 
 
 def cross_matrix(policies: list[BackendPolicy], circuits: list[IntermediateRepresentation], profiles=DEFAULT_PROFILES) -> dict:
@@ -81,7 +99,7 @@ def cross_matrix(policies: list[BackendPolicy], circuits: list[IntermediateRepre
             per_seed = []
             for s in seeds:
                 p = by[(train_prof, s)]
-                cfg = RLConfig.from_dict({**p.config.to_dict(), "calibration": test})
+                cfg = retarget(p.config, test)
                 reds = []
                 for c in circuits:
                     out, _ = run_policy(p.policy, c, cfg, greedy=True)
@@ -99,13 +117,12 @@ def cross_matrix(policies: list[BackendPolicy], circuits: list[IntermediateRepre
         own_wins[t] = sum(
             all(matrix[t][t]["per_seed"][i] >= matrix[t][o]["per_seed"][i] for o in profiles if o != t) for i in range(len(seeds))
         )
-    a, b = profiles[0], profiles[1]
+    pairs = [(a, b) for i, a in enumerate(profiles) for b in profiles[i + 1:]]
     differ = [
-        mean(
-            1.0 if outputs[(t, a, s, c.name)] != outputs[(t, b, s, c.name)] else 0.0 for c in circuits
-        )
+        mean(1.0 if outputs[(t, a, s, c.name)] != outputs[(t, b, s, c.name)] else 0.0 for c in circuits)
         for t in profiles
         for s in seeds
+        for a, b in pairs
     ]
     return {
         "profiles": list(profiles), "seeds": seeds, "n_circuits": len(circuits), "matrix": matrix,
