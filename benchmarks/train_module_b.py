@@ -68,6 +68,7 @@ def main() -> None:
     ap.add_argument("--timeout", type=float, default=2.0, help="per-window solver timeout")
     ap.add_argument("--extra-labels", nargs="*", default=["data/labels_resynth_v2", "data/lab_new"])
     ap.add_argument("--timeouts-as-zero", action="store_true")
+    ap.add_argument("--exclude-prefix", nargs="*", default=[])
     a = ap.parse_args()
 
     work = Path(a.work)
@@ -115,7 +116,9 @@ def main() -> None:
           f"max window {max(r.end - r.start for r in allrows)} gates "
           f"(pipeline max_gates={rc.max_gates}, max_qubits={rc.max_qubits}); "
           f"pair positives: {sum(len(c) for _, c in pairs.values())}")
-    names = sorted(pairs.keys() & wins.keys())
+    names = [n for n in sorted(pairs.keys() & wins.keys()) if not n.startswith(tuple(a.exclude_prefix))]
+    assert not any(n.startswith(tuple(a.exclude_prefix)) for n in names) if a.exclude_prefix else True
+    print("excluded:", sorted(n for n in pairs.keys() & wins.keys() if a.exclude_prefix and n.startswith(tuple(a.exclude_prefix))))
     tr, va, te = train_val_test_split(names, seed=a.seed)  # split BY CIRCUIT
     P = lambda ns: [pairs[n] for n in ns]  # noqa: E731
     W = lambda ns: [wins[n] for n in ns]   # noqa: E731

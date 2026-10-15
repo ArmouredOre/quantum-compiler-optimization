@@ -387,20 +387,17 @@ class HybridOptimizer:
         if mode == "exhaustive":
             return windows
         if mode == "gnn" and self.gnn.has_window_head:
-            # #34: calibrated P(reducible) from the window head.
             spans = _window_spans(ir, windows)
-            if spans is not None:  # full-circuit context, as in training
-                probs = self.gnn.score_windows(ir, spans)
-            else:
-                probs = [
-                    self.gnn.score_windows(w.ir, [(0, len(w.ir))])[0] if len(w.ir) else 0.0
-                    for w in windows
-                ]
-                # #28 out-of-fold results: rule evidence + GNN tie-break beat either alone
-                # (and the head alone is worse on unseen families), so rules rank, GNN breaks ties.
-            rule = [sum(c.score for c in rule_based_candidates(w.ir)) for w in windows]
-            order = sorted(range(len(windows)),
-                           key=lambda i: (-rule[i], -probs[i], -len(windows[i].ir)))
+            if spans is not None:
+                ranked = self.gnn.rank_windows_rule_first(ir, spans)
+                rank_of = {span: r for r, (span, _) in enumerate(ranked)}
+                order = sorted(range(len(windows)), key=lambda i: rank_of[spans[i]])
+            else:  # windows don't tile ir: score each in isolation (known train/inference mismatch)
+                probs = [self.gnn.score_windows(w.ir, [(0, len(w.ir))])[0] if len(w.ir) else 0.0
+                         for w in windows]
+                rule = [len(rule_based_candidates(w.ir)) for w in windows]
+                order = sorted(range(len(windows)),
+                               key=lambda i: (-rule[i], -probs[i], -len(windows[i].ir)))
             return [windows[i] for i in order]
         if mode == "rule":
             score = lambda w: sum(c.score for c in rule_based_candidates(w.ir))  # noqa: E731
