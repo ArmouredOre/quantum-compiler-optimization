@@ -238,6 +238,7 @@ class GNNCancellationPredictor:
         self._temperature = 1.0  # window-head calibration (#28)
         self._rule_cache: dict = {}
         self._window_trained = False
+        self._pair_trained = False  # set by fit(), restored by load()
 
     def fit(
         self,
@@ -268,6 +269,7 @@ class GNNCancellationPredictor:
         net.train()
         opt = torch.optim.Adam(net.parameters(), lr=self.config.lr)
         self._net = net
+        self._pair_trained = True
 
         losses: list[float] = []
         for _epoch in range(self.config.epochs):
@@ -302,7 +304,7 @@ class GNNCancellationPredictor:
     ) -> list[CancellationCandidate]:
         """Ranked cancellation candidates (highest score first)."""
         thr = self._threshold if threshold is None else threshold
-        if self._net is None:
+        if self._net is None or not self._pair_trained:
             cands = rule_based_candidates(ir)
             return sorted((c for c in cands if c.score >= thr), key=lambda c: -c.score)
 
@@ -425,7 +427,7 @@ class GNNCancellationPredictor:
         """What the pipeline applies: pairs best-first (rule-proven pairs never lost), windows
         ordered by rule evidence first with the calibrated GNN P(reducible) as tie-break."""
         pairs = self.predict(ir, threshold)
-        if include_rules and self._net is not None:  # trained GNN never loses a rule-proven pair
+        if include_rules and self._net is not None and self._pair_trained:  # trained GNN never loses a rule-proven pair
             seen = {(c.a, c.b) for c in pairs}
             pairs = sorted(
                 pairs + [c for c in rule_based_candidates(ir) if (c.a, c.b) not in seen],
@@ -451,6 +453,7 @@ class GNNCancellationPredictor:
                 "temperature": self._temperature,
                 "feature_dim": FEATURE_DIM,
                 "window_head": self._window_trained,
+                "pair_head": self._pair_trained,
             },
             dest,
         )
@@ -474,6 +477,7 @@ class GNNCancellationPredictor:
         )
         if bad:
             raise ValueError(f"checkpoint mismatch: {bad}")
+        self._pair_trained = bool(blob.get("pair_head", True))  # old checkpoints predate the flag
         self._window_trained = bool(blob.get("window_head", False)) and not any(
             k.startswith("window_scorer") for k in res.missing_keys
         )
