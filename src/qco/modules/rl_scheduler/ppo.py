@@ -45,7 +45,7 @@ POLICY_FORMAT = "qco-rl-ppo-v1"
 
 def make_env(circuit: IntermediateRepresentation, config: RLConfig) -> SchedulerEnv:
     """The environment every learner/evaluator uses, built from one ``RLConfig``."""
-    return SchedulerEnv(
+    env = SchedulerEnv(
         circuit,
         config.weights,
         max_episode_steps=config.max_episode_steps,
@@ -55,6 +55,8 @@ def make_env(circuit: IntermediateRepresentation, config: RLConfig) -> Scheduler
         cr_window=config.cr_window,
         stop_on_noop=True,
     )
+    env.lookahead_metric = config.lookahead_metric
+    return env
 
 
 class PPOPolicy:

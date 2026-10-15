@@ -21,6 +21,7 @@ Global features (``GLOBAL_DIM`` = 7) feed the value function.
 
 from __future__ import annotations
 
+from qco.evaluation.metrics import execution_time
 from qco.ir.intermediate_representation import Gate, IntermediateRepresentation
 from qco.modules.rl_scheduler.rewrites import IllegalActionError, apply_action
 
@@ -65,11 +66,21 @@ def asap_and_tail(ir: IntermediateRepresentation) -> tuple[list[int], list[int]]
 
 
 def _lookahead(env, action) -> float:
+    """One-step improvement of ``action``, clipped to [-1, 1].
+
+    ``env.lookahead_metric`` = "depth" (default: layers saved) or "time" (calibrated
+    critical-path ns saved, in average-layer units; backend-dependent, Sprint 3 / #29).
+    """
     try:
         after = apply_action(env.circuit, action.kind.name, action.i, action.j, env.commutation)
     except IllegalActionError:
         return 0.0
-    delta = env.circuit.depth() - after.depth()
+    if getattr(env, "lookahead_metric", "depth") == "time":
+        delta = (
+            execution_time(env.circuit, env.calibration).value - execution_time(after, env.calibration).value
+        ) / env.time_unit
+    else:
+        delta = env.circuit.depth() - after.depth()
     return max(-_LOOKAHEAD_CLIP, min(_LOOKAHEAD_CLIP, float(delta))) / _LOOKAHEAD_CLIP
 
 

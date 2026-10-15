@@ -121,3 +121,30 @@ def train_sb3(config: RLConfig, out_dir: str | Path | None = None, *, log=print)
     if log:
         log(f"[sb3] trained {config.total_timesteps} timesteps")
     return model
+
+
+def run_sb3_policy(model, circuit, config: RLConfig):
+    """Greedy (deterministic, masked) rollout of a trained ``MaskablePPO``.
+
+    Returns the best ``(depth, gate_count)`` circuit seen, like ``ppo.run_policy``.
+    """
+    _require()
+    env = SlotEnv([circuit], config)
+    obs, _ = env.reset()
+    best = env.env.circuit
+    best_key = (best.depth(), best.gate_count())
+    while True:
+        action, _ = model.predict(obs, action_masks=env.action_masks(), deterministic=True)
+        obs, _, term, trunc, _ = env.step(int(action))
+        c = env.env.circuit
+        key = (c.depth(), c.gate_count())
+        if key < best_key:
+            best, best_key = c, key
+        if term or trunc:
+            return best
+
+
+def load_sb3(path: str | Path):
+    """Load a model saved by :func:`train_sb3` (``<dir>/sb3_model.zip``)."""
+    _require()
+    return MaskablePPO.load(str(path))

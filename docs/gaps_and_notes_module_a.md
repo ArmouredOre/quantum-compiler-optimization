@@ -218,3 +218,7 @@ Full write-up: [`sprint2_report_module_a.md`](sprint2_report_module_a.md). Gaps 
 6. **`RLScheduler.schedule()` untrained path unchanged** (pipeline tests pin it). Wiring the trained policy / CR pass into the pipeline default is Sprint 3 with the pipeline owner.
 7. **Equivalence is only asserted up to 8 qubits** (numeric backend); 10/20/40-qubit generalization needs the SMT path.
 8. **Proxy reward only.** Stage 6 is not wired; `calibration` is plumbed through for later.
+
+---
+# Sprint 3 / N4 addendum (#26, #29)
+See [`sprint3_report_module_a.md`](sprint3_report_module_a.md). Gaps: (1) calibration only reaches the reward through gate counts, so per-backend learning needs the opt-in `RewardWeights.time` term; (2) per-backend policies differ but do not reliably win on their own backend with the current illustrative profiles; (3) 10/20-qubit outputs are not equivalence-checked (numeric cap 8 qubits); (4) SB3 models are now usable via `RLScheduler`, `.zip` load needs the `rl` extra.
