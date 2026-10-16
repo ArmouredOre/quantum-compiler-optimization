@@ -164,6 +164,9 @@ class E2EResult:
     depth_red_pct: float
     gate_red_pct: float
     seconds: float
+    verified: bool | None = None   # pipeline's block-wise equivalence verdict (None = not recorded)
+    blocks: int = 0
+    unverified_blocks: int = 0     # blocks whose rewrite could not be decided by the checker
 
 
 def evaluate_end_to_end(
@@ -203,6 +206,9 @@ def evaluate_end_to_end(
                 _pct(c.depth(), final.depth()),
                 _pct(c.gate_count(), final.gate_count()),
                 time.time() - t,
+                bool(res.verified),
+                res.blocks,
+                res.unverified_blocks,
             )
         )
     return out

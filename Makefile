@@ -52,3 +52,22 @@ tune-partition:  ## #46: partitioner tuning table
 
 bench-parallel:  ## #46: serial vs parallel block stage
 	python benchmarks/bench_parallel.py --workers 1 2
+
+eval-ablations:  ## #37: CR on/off + reward-weight sweep (train, eval, report; slow)
+	python scripts/gen_circuits_40q.py
+	python scripts/eval_ablations.py --stage train --seeds 0 1 --timesteps 40000
+	python scripts/eval_ablations.py --stage eval --seeds 0 1
+	python scripts/eval_ablations.py --stage report --seeds 0 1
+
+eval-large:  ## #37: zero-shot 40-qubit generalization + end-to-end runs (slow)
+	python scripts/gen_circuits_40q.py
+	for s in 0 1 2; do python scripts/eval_large_generalization.py --stage run --seed $$s; done
+	python scripts/eval_large_generalization.py --stage report --seeds 0 1 2
+	python scripts/eval_large_generalization.py --stage e2e
+
+eval-backends-bench:  ## #37/#29: per-backend policies on the benchmark circuits
+	for b in 5-6 8-12 16-20 40; do python scripts/eval_backend_benchmarks.py --bucket $$b; done
+	python scripts/eval_backend_benchmarks.py --report
+
+bench-scaling:  ## #37: measured Module A scaling
+	python benchmarks/bench_module_a_scaling.py

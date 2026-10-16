@@ -1,0 +1,53 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="560" height="346" viewBox="0 0 560 346" font-family="system-ui,sans-serif">
+<rect width="560" height="346" fill="#fcfcfb"/>
+<text x="64" y="24" font-size="14" font-weight="600" fill="#0b0b0b">40-qubit zero-shot: depth / gate-count reduction %</text>
+<line x1="64" x2="536" y1="244.0" y2="244.0" stroke="#e4e3df" stroke-width="1"/>
+<text x="58" y="248.0" font-size="11" text-anchor="end" fill="#52514e">0</text>
+<line x1="64" x2="536" y1="205.6" y2="205.6" stroke="#e4e3df" stroke-width="1"/>
+<text x="58" y="209.6" font-size="11" text-anchor="end" fill="#52514e">2</text>
+<line x1="64" x2="536" y1="167.2" y2="167.2" stroke="#e4e3df" stroke-width="1"/>
+<text x="58" y="171.2" font-size="11" text-anchor="end" fill="#52514e">4</text>
+<line x1="64" x2="536" y1="128.8" y2="128.8" stroke="#e4e3df" stroke-width="1"/>
+<text x="58" y="132.8" font-size="11" text-anchor="end" fill="#52514e">6</text>
+<line x1="64" x2="536" y1="90.4" y2="90.4" stroke="#e4e3df" stroke-width="1"/>
+<text x="58" y="94.4" font-size="11" text-anchor="end" fill="#52514e">8</text>
+<line x1="64" x2="536" y1="52.0" y2="52.0" stroke="#e4e3df" stroke-width="1"/>
+<text x="58" y="56.0" font-size="11" text-anchor="end" fill="#52514e">10</text>
+<text x="14" y="148" font-size="11" fill="#52514e" transform="rotate(-90 14 148)" text-anchor="middle">% reduction</text>
+<rect x="80.0" y="244.0" width="27.4" height="0.0" rx="2" fill="#2a78d6"><title>stub / depth: 0</title></rect>
+<rect x="109.4" y="225.7" width="27.4" height="18.3" rx="2" fill="#eb6834"><title>CR only / depth: 0.952</title></rect>
+<rect x="138.9" y="100.7" width="27.4" height="143.3" rx="2" fill="#1baf7a"><title>greedy+CR / depth: 7.47</title></rect>
+<line x1="152.6" x2="152.6" y1="108.2" y2="93.1" stroke="#0b0b0b" stroke-width="1"/>
+<rect x="168.3" y="64.9" width="27.4" height="179.1" rx="2" fill="#eda100"><title>PPO+CR / depth: 9.33</title></rect>
+<line x1="182.0" x2="182.0" y1="74.7" y2="55.1" stroke="#0b0b0b" stroke-width="1"/>
+<rect x="197.7" y="64.9" width="27.4" height="179.1" rx="2" fill="#e87ba4"><title>PPO+CR scaled / depth: 9.33</title></rect>
+<line x1="211.4" x2="211.4" y1="74.7" y2="55.1" stroke="#0b0b0b" stroke-width="1"/>
+<rect x="227.1" y="80.6" width="27.4" height="163.4" rx="2" fill="#008300"><title>PPO no CR / depth: 8.51</title></rect>
+<line x1="240.9" x2="240.9" y1="83.7" y2="77.5" stroke="#0b0b0b" stroke-width="1"/>
+<rect x="256.6" y="86.2" width="27.4" height="157.8" rx="2" fill="#6250d6"><title>CR off at test / depth: 8.22</title></rect>
+<line x1="270.3" x2="270.3" y1="94.0" y2="78.5" stroke="#0b0b0b" stroke-width="1"/>
+<text x="182.0" y="262" font-size="11" text-anchor="middle" fill="#0b0b0b">depth</text>
+<rect x="316.0" y="244.0" width="27.4" height="0.0" rx="2" fill="#2a78d6"><title>stub / gate count: 0</title></rect>
+<rect x="345.4" y="116.1" width="27.4" height="127.9" rx="2" fill="#eb6834"><title>CR only / gate count: 6.66</title></rect>
+<rect x="374.9" y="116.1" width="27.4" height="127.9" rx="2" fill="#1baf7a"><title>greedy+CR / gate count: 6.66</title></rect>
+<rect x="404.3" y="116.1" width="27.4" height="127.9" rx="2" fill="#eda100"><title>PPO+CR / gate count: 6.66</title></rect>
+<rect x="433.7" y="116.1" width="27.4" height="127.9" rx="2" fill="#e87ba4"><title>PPO+CR scaled / gate count: 6.66</title></rect>
+<rect x="463.1" y="244.0" width="27.4" height="0.0" rx="2" fill="#008300"><title>PPO no CR / gate count: 0</title></rect>
+<rect x="492.6" y="244.0" width="27.4" height="0.0" rx="2" fill="#6250d6"><title>CR off at test / gate count: 0</title></rect>
+<text x="418.0" y="262" font-size="11" text-anchor="middle" fill="#0b0b0b">gate count</text>
+<line x1="64" x2="536" y1="244.0" y2="244.0" stroke="#52514e" stroke-width="1"/>
+<rect x="64" y="277" width="10" height="10" rx="2" fill="#2a78d6"/>
+<text x="79" y="286" font-size="11" fill="#0b0b0b">stub</text>
+<rect x="184" y="277" width="10" height="10" rx="2" fill="#eb6834"/>
+<text x="199" y="286" font-size="11" fill="#0b0b0b">CR only</text>
+<rect x="303" y="277" width="10" height="10" rx="2" fill="#1baf7a"/>
+<text x="318" y="286" font-size="11" fill="#0b0b0b">greedy+CR</text>
+<rect x="64" y="295" width="10" height="10" rx="2" fill="#eda100"/>
+<text x="79" y="304" font-size="11" fill="#0b0b0b">PPO+CR</text>
+<rect x="184" y="295" width="10" height="10" rx="2" fill="#e87ba4"/>
+<text x="199" y="304" font-size="11" fill="#0b0b0b">PPO+CR scaled</text>
+<rect x="303" y="295" width="10" height="10" rx="2" fill="#008300"/>
+<text x="318" y="304" font-size="11" fill="#0b0b0b">PPO no CR</text>
+<rect x="64" y="313" width="10" height="10" rx="2" fill="#6250d6"/>
+<text x="79" y="322" font-size="11" fill="#0b0b0b">CR off at test</text>
+</svg>

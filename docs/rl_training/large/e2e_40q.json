@@ -1,0 +1,138 @@
+{
+ "stub (untrained)": [
+  {
+   "name": "qaoa_n40_p1",
+   "qubits": 40,
+   "reward": -3.33066907387547e-17,
+   "depth_red_pct": 0.0,
+   "gate_red_pct": 0.0,
+   "seconds": 0.2707068920135498,
+   "verified": true,
+   "blocks": 48,
+   "unverified_blocks": 0
+  },
+  {
+   "name": "qaoa_n40_p2",
+   "qubits": 40,
+   "reward": 2.7755575615628915e-18,
+   "depth_red_pct": 0.0,
+   "gate_red_pct": 0.0,
+   "seconds": 0.2898995876312256,
+   "verified": true,
+   "blocks": 55,
+   "unverified_blocks": 0
+  },
+  {
+   "name": "qft_n40",
+   "qubits": 40,
+   "reward": 0.0,
+   "depth_red_pct": 0.0,
+   "gate_red_pct": 0.0,
+   "seconds": 2.3505759239196777,
+   "verified": true,
+   "blocks": 147,
+   "unverified_blocks": 0
+  },
+  {
+   "name": "rand_cliffordt_n40",
+   "qubits": 40,
+   "reward": 0.02724918468026099,
+   "depth_red_pct": 0.0,
+   "gate_red_pct": 6.796818510484454,
+   "seconds": 1.4994909763336182,
+   "verified": true,
+   "blocks": 112,
+   "unverified_blocks": 0
+  },
+  {
+   "name": "rand_cnotpauli_n40",
+   "qubits": 40,
+   "reward": 0.050764979616253376,
+   "depth_red_pct": 1.4285714285714286,
+   "gate_red_pct": 11.234177215189874,
+   "seconds": 1.0984070301055908,
+   "verified": true,
+   "blocks": 115,
+   "unverified_blocks": 0
+  },
+  {
+   "name": "ghz_n40",
+   "qubits": 40,
+   "reward": 0.0,
+   "depth_red_pct": 0.0,
+   "gate_red_pct": 0.0,
+   "seconds": 0.03239560127258301,
+   "verified": true,
+   "blocks": 6,
+   "unverified_blocks": 0
+  }
+ ],
+ "trained agent (default)": [
+  {
+   "name": "qaoa_n40_p1",
+   "qubits": 40,
+   "reward": 0.07659574468085106,
+   "depth_red_pct": 19.148936170212767,
+   "gate_red_pct": 0.0,
+   "seconds": 0.5858948230743408,
+   "verified": true,
+   "blocks": 48,
+   "unverified_blocks": 0
+  },
+  {
+   "name": "qaoa_n40_p2",
+   "qubits": 40,
+   "reward": 0.03809523809523811,
+   "depth_red_pct": 9.523809523809524,
+   "gate_red_pct": 0.0,
+   "seconds": 0.9165170192718506,
+   "verified": true,
+   "blocks": 55,
+   "unverified_blocks": 0
+  },
+  {
+   "name": "qft_n40",
+   "qubits": 40,
+   "reward": 0.017169848272168296,
+   "depth_red_pct": 0.0,
+   "gate_red_pct": 4.285714285714286,
+   "seconds": 4.362997770309448,
+   "verified": true,
+   "blocks": 147,
+   "unverified_blocks": 0
+  },
+  {
+   "name": "rand_cliffordt_n40",
+   "qubits": 40,
+   "reward": 0.05230460155932537,
+   "depth_red_pct": 2.857142857142857,
+   "gate_red_pct": 10.195227765726681,
+   "seconds": 4.5108842849731445,
+   "verified": true,
+   "blocks": 112,
+   "unverified_blocks": 0
+  },
+  {
+   "name": "rand_cnotpauli_n40",
+   "qubits": 40,
+   "reward": 0.04505069390196766,
+   "depth_red_pct": 0.0,
+   "gate_red_pct": 11.234177215189874,
+   "seconds": 2.331454038619995,
+   "verified": true,
+   "blocks": 115,
+   "unverified_blocks": 0
+  },
+  {
+   "name": "ghz_n40",
+   "qubits": 40,
+   "reward": 0.0,
+   "depth_red_pct": 0.0,
+   "gate_red_pct": 0.0,
+   "seconds": 0.036487579345703125,
+   "verified": true,
+   "blocks": 6,
+   "unverified_blocks": 0
+  }
+ ]
+}

@@ -1,0 +1,40 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="568" height="328" viewBox="0 0 568 328" font-family="system-ui,sans-serif">
+<rect width="568" height="328" fill="#fcfcfb"/>
+<text x="64" y="24" font-size="14" font-weight="600" fill="#0b0b0b">CR pass on/off: gate-count reduction %</text>
+<line x1="64" x2="544" y1="244.0" y2="244.0" stroke="#e4e3df" stroke-width="1"/>
+<text x="58" y="248.0" font-size="11" text-anchor="end" fill="#52514e">0</text>
+<line x1="64" x2="544" y1="205.6" y2="205.6" stroke="#e4e3df" stroke-width="1"/>
+<text x="58" y="209.6" font-size="11" text-anchor="end" fill="#52514e">2</text>
+<line x1="64" x2="544" y1="167.2" y2="167.2" stroke="#e4e3df" stroke-width="1"/>
+<text x="58" y="171.2" font-size="11" text-anchor="end" fill="#52514e">4</text>
+<line x1="64" x2="544" y1="128.8" y2="128.8" stroke="#e4e3df" stroke-width="1"/>
+<text x="58" y="132.8" font-size="11" text-anchor="end" fill="#52514e">6</text>
+<line x1="64" x2="544" y1="90.4" y2="90.4" stroke="#e4e3df" stroke-width="1"/>
+<text x="58" y="94.4" font-size="11" text-anchor="end" fill="#52514e">8</text>
+<line x1="64" x2="544" y1="52.0" y2="52.0" stroke="#e4e3df" stroke-width="1"/>
+<text x="58" y="56.0" font-size="11" text-anchor="end" fill="#52514e">10</text>
+<text x="14" y="148" font-size="11" fill="#52514e" transform="rotate(-90 14 148)" text-anchor="middle">gate-count reduction %</text>
+<rect x="80.0" y="76.5" width="28.0" height="167.5" rx="2" fill="#2a78d6"><title>baseline (CR on) / 5-6q: 8.72</title></rect>
+<rect x="110.0" y="244.0" width="28.0" height="0.0" rx="2" fill="#eb6834"><title>CR off (train + run) / 5-6q: 0</title></rect>
+<rect x="140.0" y="244.0" width="28.0" height="0.0" rx="2" fill="#1baf7a"><title>CR-trained, CR off at test / 5-6q: 0</title></rect>
+<text x="124.0" y="262" font-size="11" text-anchor="middle" fill="#0b0b0b">5-6q</text>
+<rect x="200.0" y="105.9" width="28.0" height="138.1" rx="2" fill="#2a78d6"><title>baseline (CR on) / 8-12q: 7.19</title></rect>
+<rect x="230.0" y="244.0" width="28.0" height="0.0" rx="2" fill="#eb6834"><title>CR off (train + run) / 8-12q: 0</title></rect>
+<rect x="260.0" y="244.0" width="28.0" height="0.0" rx="2" fill="#1baf7a"><title>CR-trained, CR off at test / 8-12q: 0</title></rect>
+<text x="244.0" y="262" font-size="11" text-anchor="middle" fill="#0b0b0b">8-12q</text>
+<rect x="320.0" y="119.7" width="28.0" height="124.3" rx="2" fill="#2a78d6"><title>baseline (CR on) / 16-20q: 6.47</title></rect>
+<rect x="350.0" y="244.0" width="28.0" height="0.0" rx="2" fill="#eb6834"><title>CR off (train + run) / 16-20q: 0</title></rect>
+<rect x="380.0" y="244.0" width="28.0" height="0.0" rx="2" fill="#1baf7a"><title>CR-trained, CR off at test / 16-20q: 0</title></rect>
+<text x="364.0" y="262" font-size="11" text-anchor="middle" fill="#0b0b0b">16-20q</text>
+<rect x="440.0" y="116.1" width="28.0" height="127.9" rx="2" fill="#2a78d6"><title>baseline (CR on) / 40q: 6.66</title></rect>
+<rect x="470.0" y="244.0" width="28.0" height="0.0" rx="2" fill="#eb6834"><title>CR off (train + run) / 40q: 0</title></rect>
+<rect x="500.0" y="244.0" width="28.0" height="0.0" rx="2" fill="#1baf7a"><title>CR-trained, CR off at test / 40q: 0</title></rect>
+<text x="484.0" y="262" font-size="11" text-anchor="middle" fill="#0b0b0b">40q</text>
+<line x1="64" x2="544" y1="244.0" y2="244.0" stroke="#52514e" stroke-width="1"/>
+<rect x="64" y="277" width="10" height="10" rx="2" fill="#2a78d6"/>
+<text x="79" y="286" font-size="11" fill="#0b0b0b">baseline (CR on)</text>
+<rect x="260" y="277" width="10" height="10" rx="2" fill="#eb6834"/>
+<text x="275" y="286" font-size="11" fill="#0b0b0b">CR off (train + run)</text>
+<rect x="64" y="295" width="10" height="10" rx="2" fill="#1baf7a"/>
+<text x="79" y="304" font-size="11" fill="#0b0b0b">CR-trained, CR off at test</text>
+</svg>
