@@ -41,9 +41,13 @@ from qco.ir.intermediate_representation import IntermediateRepresentation
 from qco.ir.parser import from_qasm2
 
 BENCH_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "..", "benchmarks", "circuits")
-# Committed Module A policy (Maanas, #29); used by the CLI unless --rl-policy none.
+# Committed Module A policy used by the CLI unless --rl-policy none. It must be the *pipeline's* default
+# (qco.pipeline.DEFAULT_RL_POLICY = models/rl_ppo_5q.json, #26/#35) so `make eval` and HybridOptimizer() run the
+# same agent; tests/test_rl_closed_loop.py asserts they agree (qco.pipeline imports this package, so the
+# constant cannot be imported from there). Until #41 this pointed at the older, 60k-step Sprint 2 checkpoint
+# docs/rl_training/ppo_5q/best.json.
 DEFAULT_RL_POLICY = os.path.normpath(
-    os.path.join(os.path.dirname(__file__), "..", "..", "..", "docs", "rl_training", "ppo_5q", "best.json")
+    os.path.join(os.path.dirname(__file__), "..", "..", "..", "models", "rl_ppo_5q.json")
 )
 
 CSV_FIELDS = [

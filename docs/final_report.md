@@ -101,7 +101,10 @@ Source notes: [`ir_graph_layer_notes.md`](ir_graph_layer_notes.md) (gate set,
 parsers, commutation table and its exact-unitary soundness check, CX-cost
 hypergraph, partitioner contract and the width-cap trade-off with numbers).
 
-### 5.2 Module A: RL adaptive scheduler ⏳ *(Maanas, #41)*
+### 5.2 Module A: RL adaptive scheduler ✅ *(Maanas, #41)*
+
+See [`module_a_final_report_section.md`](module_a_final_report_section.md) (method, design choices, results,
+limitations, hand-off table); figures in [`rl_training/figures/`](rl_training/figures/).
 
 ### 5.3 Module B: GNN cancellation predictor ⏳ *(Prisha, #42)*
 
@@ -251,7 +254,7 @@ integration — Swaraj Rane. Graph-layer follow-ups were redistributed: #45
 |---|---|---|---|
 | IR / graph-layer notes for #48 | Swaraj | #44 | ✅ [`ir_graph_layer_notes.md`](ir_graph_layer_notes.md) |
 | Graph-layer section | Prisha | #48 | ⏳ |
-| Module A section + generalization plots | Maanas | #41 | ⏳ |
+| Module A section + generalization plots | Maanas | #41 | ✅ [`module_a_final_report_section.md`](module_a_final_report_section.md), [`rl_training/figures/`](rl_training/figures/) |
 | Module B section + P/R and window-ranking plots | Prisha | #42 | ⏳ |
 | Module C section + optimality/scaling plots | Sahib | #43 | ✅ |
 | Module D section | Swaraj | #44 | ✅ (pipeline results provisional) |
