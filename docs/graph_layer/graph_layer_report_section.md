@@ -130,7 +130,7 @@ These problems were found by reading `dag.py`, `hypergraph.py`, `partitioning.py
 | 5 | `Counter`, `dataclass` and `field` were imported twice | top of `partitioning.py` | Duplicate lines removed. |
 | 6 | Edge cases: an empty circuit through the partitioner; a circuit with no multi-qubit gates through `metis` or `kahypar` (empty hypergraph, header `0 n 1`) | tests | Tests added and pass on the current code, so no fix was needed. |
 
-**Status.** Items 1–5 were fixed and are covered by `tests/test_graph_layer_fixes.py` (12 tests, all passing); the full suite passes with no failures. Commit: [add hash].
+**Status.** Items 1–5 were fixed and are covered by `tests/test_graph_layer_fixes.py` (12 tests, all passing); the full suite passes with no failures. Commit: da4677c.
 
 Reviewing `parser.py` also turned up four bugs, each reproduced by a failing test before the fix:
 
