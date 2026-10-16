@@ -65,6 +65,11 @@ class RLConfig:
     max_grad_norm: float = 0.5
     max_candidates: int | None = 48   # cap on legal actions scored per step *during training*
 
+    # ---- closed loop (#35) -------------------------------------------------
+    reward_source: str = "proxy"        # "proxy" (local terminal bonus) | "pipeline" (Stage 6 reward through the real pipeline)
+    pipeline_resynthesis: bool = False  # include SMT re-synthesis in the pipeline reward (slow; ~solver_budget_s per call)
+    eval_pipeline_reward: bool = False  # also log end-to-end pipeline reward at each held-out evaluation
+
     # ---- logging / checkpoints ---------------------------------------------
     eval_every: int = 5          # PPO iterations between held-out evaluations (0 = never)
     checkpoint_every: int = 5    # PPO iterations between ``latest.json`` writes (0 = only at the end)
@@ -77,6 +82,8 @@ class RLConfig:
             raise ValueError(f"backend must be one of {BACKENDS}, got {self.backend!r}")
         if self.commutation not in ("disjoint", "full"):
             raise ValueError(f"commutation must be 'disjoint' or 'full', got {self.commutation!r}")
+        if self.reward_source not in ("proxy", "pipeline"):
+            raise ValueError(f"reward_source must be 'proxy' or 'pipeline', got {self.reward_source!r}")
         if self.lookahead_metric not in ("depth", "time"):
             raise ValueError(f"lookahead_metric must be 'depth' or 'time', got {self.lookahead_metric!r}")
         from qco.evaluation.calibration import get_calibration

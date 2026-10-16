@@ -25,6 +25,7 @@ CSV_FIELDS = [
     "iteration", "timesteps", "episodes", "mean_return", "mean_ep_len",
     "train_depth_red_pct", "train_gate_red_pct", "eval_depth_red_pct", "eval_gate_red_pct",
     "policy_loss", "value_loss", "entropy", "approx_kl", "clip_frac", "seconds",
+    "mean_terminal_reward", "eval_pipeline_reward",   # #35: terminal bonus actually used; end-to-end Stage 6 reward
 ]
 
 
@@ -89,12 +90,23 @@ def train(
                 "train_depth_red_pct": _mean([e["depth_red_pct"] for e in episodes]),
                 "train_gate_red_pct": _mean([e["gate_red_pct"] for e in episodes]),
                 "eval_depth_red_pct": "", "eval_gate_red_pct": "",
+                "mean_terminal_reward": _mean([e.get("terminal_reward", 0.0) for e in episodes]),
+                "eval_pipeline_reward": "",
                 **stats,
             }
             if config.eval_every and it % config.eval_every == 0:
                 ev = evaluate(eval_pool, config, policy=trainer.policy)
                 row["eval_depth_red_pct"], row["eval_gate_red_pct"] = ev["depth_red_pct"], ev["gate_red_pct"]
-                score = ev["depth_red_pct"] + ev["gate_red_pct"]
+                e2e = None
+                if config.eval_pipeline_reward or config.reward_source == "pipeline":
+                    from qco.modules.rl_scheduler.closed_loop import evaluate_end_to_end, summarize_e2e
+
+                    e2e = summarize_e2e(evaluate_end_to_end(
+                        eval_pool, policy=trainer.policy, rl_config=config,
+                        calibration=config.calibration, resynthesis=config.pipeline_resynthesis))
+                    row["eval_pipeline_reward"] = e2e["reward"]
+                # best.json: end-to-end Stage 6 reward when it is being measured, else depth + gates
+                score = e2e["reward"] if e2e else ev["depth_red_pct"] + ev["gate_red_pct"]
                 if out and score > best_eval:
                     best_eval = score
                     save_policy(trainer.policy, out / "best.json", {"config": config.to_dict(), "iteration": it, "timesteps": trainer.timesteps, "eval": ev})

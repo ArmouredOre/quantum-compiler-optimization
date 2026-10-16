@@ -45,6 +45,11 @@ POLICY_FORMAT = "qco-rl-ppo-v1"
 
 def make_env(circuit: IntermediateRepresentation, config: RLConfig) -> SchedulerEnv:
     """The environment every learner/evaluator uses, built from one ``RLConfig``."""
+    terminal_fn = None
+    if config.reward_source == "pipeline":
+        from qco.modules.rl_scheduler.closed_loop import get_pipeline_reward  # lazy: pulls in the pipeline
+
+        terminal_fn = get_pipeline_reward(config.calibration, config.pipeline_resynthesis)
     env = SchedulerEnv(
         circuit,
         config.weights,
@@ -55,6 +60,7 @@ def make_env(circuit: IntermediateRepresentation, config: RLConfig) -> Scheduler
         reduction=config.deterministic_reduction,
         cr_window=config.cr_window,
         stop_on_noop=True,
+        terminal_reward_fn=terminal_fn,
     )
     env.lookahead_metric = config.lookahead_metric
     return env
@@ -215,6 +221,7 @@ class PPOTrainer:
             ref_depth, ref_gates = env.reference.depth(), env.reference.gate_count()
             start = len(batch)
             ep_return = 0.0
+            terminal_reward = 0.0
             term = trunc = False
             last_rows = last_g = None
             while not (term or trunc):
@@ -225,6 +232,8 @@ class PPOTrainer:
                 _, r, term, trunc, info = env.step(actions[idx])
                 batch.append(Transition(rows, g, idx, logp, v, r))
                 ep_return += r
+                if term or trunc:
+                    terminal_reward = info["terminal_reward"]
             # bootstrap value of the final state (0 on true termination)
             if trunc and not term:
                 actions = select_candidates(info["legal_actions"], cfg.max_candidates, self.rng)
@@ -241,6 +250,7 @@ class PPOTrainer:
                     "depth_red_pct": 100.0 * (ref_depth - fin.depth()) / ref_depth if ref_depth else 0.0,
                     "gate_red_pct": 100.0 * (ref_gates - fin.gate_count()) / ref_gates if ref_gates else 0.0,
                     "cr_removed": env.cr_initial_removed,
+                    "terminal_reward": terminal_reward,
                 }
             )
         self.timesteps += len(batch)

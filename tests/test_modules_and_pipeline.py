@@ -305,7 +305,7 @@ def test_pipeline_uses_trained_rl_policy():
     ir = parse("benchmarks/circuits/rand_cliffordt_n5.qasm")
     cfg = dict(solver_budget_s=0.5, use_ea=False)
     trained = optimize(ir, PipelineConfig(rl_policy_path=RL_POLICY, **cfg))
-    untrained = optimize(ir, PipelineConfig(**cfg))
+    untrained = optimize(ir, PipelineConfig(rl_policy_path=None, **cfg))  # None = untrained stand-in (default is now "auto")
     best = trained.pareto_front[0].circuit
     assert EquivalenceChecker().check(ir, best).equivalent
     assert best.gate_count() < untrained.pareto_front[0].circuit.gate_count()
@@ -332,7 +332,9 @@ def test_pipeline_loads_trained_gnn(tmp_path):
 
 def test_confidence_gating_skips_rule_proven_checks_at_equal_correctness():
     ir = parse("benchmarks/circuits/grover_w3_i2.qasm")
-    cfg = dict(solver_budget_s=0.0, use_ea=False, gnn_checkpoint=None)
+    # Module A off-policy (None): the trained agent's CR pass already removes the rule-proven
+    # cancellations, which would leave nothing for the N5 gate to skip. This test isolates Module B/C.
+    cfg = dict(solver_budget_s=0.0, use_ea=False, gnn_checkpoint=None, rl_policy_path=None)
     on = optimize(ir, PipelineConfig(confidence_gating=True, **cfg))
     off = optimize(ir, PipelineConfig(confidence_gating=False, **cfg))
     assert on.verifications_skipped > 0 and off.verifications_skipped == 0
