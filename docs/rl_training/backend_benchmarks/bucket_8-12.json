@@ -1,0 +1,78 @@
+{
+ "profiles": [
+  "superconducting_ibm_like",
+  "trapped_ion_like"
+ ],
+ "seeds": [
+  0,
+  1,
+  2
+ ],
+ "n_circuits": 7,
+ "matrix": {
+  "superconducting_ibm_like": {
+   "superconducting_ibm_like": {
+    "mean": 5.3381117814527785,
+    "std_over_seeds": 1.7145439811545884,
+    "per_seed": [
+     7.760805686552117,
+     4.040699292153329,
+     4.2128303656528905
+    ]
+   },
+   "trapped_ion_like": {
+    "mean": 2.2889752529260106,
+    "std_over_seeds": 0.5593701837044707,
+    "per_seed": [
+     2.6667331712943665,
+     1.4981687898355358,
+     2.702023797648129
+    ]
+   },
+   "greedy_time": {
+    "mean": 4.100472155273472
+   }
+  },
+  "trapped_ion_like": {
+   "superconducting_ibm_like": {
+    "mean": 4.961566950100387,
+    "std_over_seeds": 1.339609578574804,
+    "per_seed": [
+     6.85604651699862,
+     4.007915266163967,
+     4.020739067138575
+    ]
+   },
+   "trapped_ion_like": {
+    "mean": 1.3491181971921962,
+    "std_over_seeds": 0.0,
+    "per_seed": [
+     1.3491181971921962,
+     1.3491181971921962,
+     1.3491181971921962
+    ]
+   },
+   "greedy_time": {
+    "mean": 3.7333832309052086
+   }
+  }
+ },
+ "wins_own_backend": {
+  "superconducting_ibm_like": true,
+  "trapped_ion_like": false
+ },
+ "own_wins_per_seed": {
+  "superconducting_ibm_like": 3,
+  "trapped_ion_like": 0
+ },
+ "fraction_schedules_differ": 0.3571428571428571,
+ "circuits": [
+  "ghz_n10",
+  "qaoa_n10_p1",
+  "qaoa_n10_p2",
+  "qft_n12",
+  "qft_n8",
+  "rand_cliffordt_n10",
+  "rand_cnotpauli_n10"
+ ]
+}

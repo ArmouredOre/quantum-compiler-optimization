@@ -36,7 +36,7 @@ from qco.modules.rl_scheduler.cr_pass import reduce_circuit
 from qco.modules.rl_scheduler.ppo import PPOPolicy, run_policy
 
 METHODS = ("stub", "cr_only", "greedy", "agent_cr", "agent_cr_x", "agent_nocr", "agent_cr_off")
-BUCKETS = (("5-6", 0, 6), ("8-12", 7, 12), ("16-20", 13, 20))
+BUCKETS = (("5-6", 0, 6), ("8-12", 7, 12), ("16-20", 13, 20), ("40", 21, 64))
 SUITE_PREFIXES = ("rand_cliffordt", "rand_cnotpauli", "qft", "qaoa", "ghz")
 MAX_QUBITS = 20
 
@@ -164,12 +164,12 @@ def summarize(result: dict) -> dict:
     return {"seeds": seeds, "per_bucket": per_bucket, "per_circuit": per_circuit}
 
 
-def to_markdown(result: dict, summary: dict, train_info: str = "") -> str:
+def to_markdown(result: dict, summary: dict, train_info: str = "", title: str = "Zero-shot generalization: 5 -> 10 -> 20 qubits (issue #26)") -> str:
     labels = {"stub": "greedy `schedule()` stub", "cr_only": "CR only", "greedy": "greedy-depth + CR",
               "agent_cr": "**PPO + CR**", "agent_cr_x": "PPO + CR, scaled budget",
               "agent_nocr": "PPO, no CR (trained & run)", "agent_cr_off": "CR-trained PPO, CR off at test"}
     methods = [m for m in METHODS if any(m in v for v in summary["per_bucket"].values())]
-    out = ["# Zero-shot generalization: 5 -> 10 -> 20 qubits (issue #26)", ""]
+    out = [f"# {title}", ""]
     if train_info:
         out += [train_info, ""]
     out += [f"Seeds: {summary['seeds']}. Values are mean % reduction vs the raw benchmark circuit "

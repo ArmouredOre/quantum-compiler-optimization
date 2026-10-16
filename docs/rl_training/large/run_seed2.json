@@ -1,0 +1,272 @@
+{
+ "circuits": [
+  {
+   "name": "qaoa_n40_p1",
+   "qubits": 40,
+   "gates": 260,
+   "depth": 47,
+   "bucket": "40"
+  },
+  {
+   "name": "qaoa_n40_p2",
+   "qubits": 40,
+   "gates": 480,
+   "depth": 42,
+   "bucket": "40"
+  },
+  {
+   "name": "qft_n40",
+   "qubits": 40,
+   "gates": 840,
+   "depth": 80,
+   "bucket": "40"
+  },
+  {
+   "name": "rand_cliffordt_n40",
+   "qubits": 40,
+   "gates": 1383,
+   "depth": 70,
+   "bucket": "40"
+  },
+  {
+   "name": "rand_cnotpauli_n40",
+   "qubits": 40,
+   "gates": 1264,
+   "depth": 70,
+   "bucket": "40"
+  },
+  {
+   "name": "ghz_n40",
+   "qubits": 40,
+   "gates": 40,
+   "depth": 40,
+   "bucket": "40"
+  }
+ ],
+ "runs": {
+  "2": {
+   "qaoa_n40_p1": {
+    "stub": {
+     "depth_red_pct": 0.0,
+     "gate_red_pct": 0.0,
+     "seconds": 0.015178918838500977
+    },
+    "cr_only": {
+     "depth_red_pct": 0.0,
+     "gate_red_pct": 0.0,
+     "seconds": 0.0018184185028076172
+    },
+    "greedy": {
+     "depth_red_pct": 29.78723404255319,
+     "gate_red_pct": 0.0,
+     "seconds": 0.19046735763549805
+    },
+    "agent_cr": {
+     "depth_red_pct": 34.04255319148936,
+     "gate_red_pct": 0.0,
+     "seconds": 1.1433706283569336
+    },
+    "agent_cr_x": {
+     "depth_red_pct": 34.04255319148936,
+     "gate_red_pct": 0.0,
+     "seconds": 9.547697305679321
+    },
+    "agent_cr_off": {
+     "depth_red_pct": 34.04255319148936,
+     "gate_red_pct": 0.0,
+     "seconds": 1.095958948135376
+    },
+    "agent_nocr": {
+     "depth_red_pct": 29.78723404255319,
+     "gate_red_pct": 0.0,
+     "seconds": 0.9784655570983887
+    }
+   },
+   "qaoa_n40_p2": {
+    "stub": {
+     "depth_red_pct": 0.0,
+     "gate_red_pct": 0.0,
+     "seconds": 0.04520010948181152
+    },
+    "cr_only": {
+     "depth_red_pct": 0.0,
+     "gate_red_pct": 0.0,
+     "seconds": 0.0032765865325927734
+    },
+    "greedy": {
+     "depth_red_pct": 4.761904761904762,
+     "gate_red_pct": 0.0,
+     "seconds": 0.18013215065002441
+    },
+    "agent_cr": {
+     "depth_red_pct": 11.904761904761905,
+     "gate_red_pct": 0.0,
+     "seconds": 3.9441049098968506
+    },
+    "agent_cr_x": {
+     "depth_red_pct": 11.904761904761905,
+     "gate_red_pct": 0.0,
+     "seconds": 31.815470695495605
+    },
+    "agent_cr_off": {
+     "depth_red_pct": 11.904761904761905,
+     "gate_red_pct": 0.0,
+     "seconds": 3.754732131958008
+    },
+    "agent_nocr": {
+     "depth_red_pct": 16.666666666666668,
+     "gate_red_pct": 0.0,
+     "seconds": 3.7614240646362305
+    }
+   },
+   "qft_n40": {
+    "stub": {
+     "depth_red_pct": 0.0,
+     "gate_red_pct": 0.0,
+     "seconds": 0.02663397789001465
+    },
+    "cr_only": {
+     "depth_red_pct": 0.0,
+     "gate_red_pct": 4.285714285714286,
+     "seconds": 0.057637929916381836
+    },
+    "greedy": {
+     "depth_red_pct": 0.0,
+     "gate_red_pct": 4.285714285714286,
+     "seconds": 1.688429355621338
+    },
+    "agent_cr": {
+     "depth_red_pct": 0.0,
+     "gate_red_pct": 4.285714285714286,
+     "seconds": 59.87750768661499
+    },
+    "agent_cr_x": {
+     "depth_red_pct": 0.0,
+     "gate_red_pct": 4.285714285714286,
+     "seconds": 477.9039216041565
+    },
+    "agent_cr_off": {
+     "depth_red_pct": 0.0,
+     "gate_red_pct": 0.0,
+     "seconds": 64.06578016281128
+    },
+    "agent_nocr": {
+     "depth_red_pct": 0.0,
+     "gate_red_pct": 0.0,
+     "seconds": 63.7103955745697
+    }
+   },
+   "rand_cliffordt_n40": {
+    "stub": {
+     "depth_red_pct": 0.0,
+     "gate_red_pct": 0.0,
+     "seconds": 0.9793164730072021
+    },
+    "cr_only": {
+     "depth_red_pct": 2.857142857142857,
+     "gate_red_pct": 17.49819233550253,
+     "seconds": 0.7191359996795654
+    },
+    "greedy": {
+     "depth_red_pct": 4.285714285714286,
+     "gate_red_pct": 17.49819233550253,
+     "seconds": 2.346954584121704
+    },
+    "agent_cr": {
+     "depth_red_pct": 5.714285714285714,
+     "gate_red_pct": 17.49819233550253,
+     "seconds": 26.300732374191284
+    },
+    "agent_cr_x": {
+     "depth_red_pct": 5.714285714285714,
+     "gate_red_pct": 17.49819233550253,
+     "seconds": 207.7047610282898
+    },
+    "agent_cr_off": {
+     "depth_red_pct": 1.4285714285714286,
+     "gate_red_pct": 0.0,
+     "seconds": 39.92219018936157
+    },
+    "agent_nocr": {
+     "depth_red_pct": 1.4285714285714286,
+     "gate_red_pct": 0.0,
+     "seconds": 37.99551820755005
+    }
+   },
+   "rand_cnotpauli_n40": {
+    "stub": {
+     "depth_red_pct": 0.0,
+     "gate_red_pct": 0.0,
+     "seconds": 0.7888503074645996
+    },
+    "cr_only": {
+     "depth_red_pct": 2.857142857142857,
+     "gate_red_pct": 18.196202531645568,
+     "seconds": 0.35419178009033203
+    },
+    "greedy": {
+     "depth_red_pct": 4.285714285714286,
+     "gate_red_pct": 18.196202531645568,
+     "seconds": 1.696493148803711
+    },
+    "agent_cr": {
+     "depth_red_pct": 7.142857142857143,
+     "gate_red_pct": 18.196202531645568,
+     "seconds": 19.794939517974854
+    },
+    "agent_cr_x": {
+     "depth_red_pct": 7.142857142857143,
+     "gate_red_pct": 18.196202531645568,
+     "seconds": 151.84016513824463
+    },
+    "agent_cr_off": {
+     "depth_red_pct": 4.285714285714286,
+     "gate_red_pct": 0.0,
+     "seconds": 27.75187873840332
+    },
+    "agent_nocr": {
+     "depth_red_pct": 4.285714285714286,
+     "gate_red_pct": 0.0,
+     "seconds": 27.47653603553772
+    }
+   },
+   "ghz_n40": {
+    "stub": {
+     "depth_red_pct": 0.0,
+     "gate_red_pct": 0.0,
+     "seconds": 5.4836273193359375e-05
+    },
+    "cr_only": {
+     "depth_red_pct": 0.0,
+     "gate_red_pct": 0.0,
+     "seconds": 0.00036525726318359375
+    },
+    "greedy": {
+     "depth_red_pct": 0.0,
+     "gate_red_pct": 0.0,
+     "seconds": 0.0011737346649169922
+    },
+    "agent_cr": {
+     "depth_red_pct": 0.0,
+     "gate_red_pct": 0.0,
+     "seconds": 0.0012619495391845703
+    },
+    "agent_cr_x": {
+     "depth_red_pct": 0.0,
+     "gate_red_pct": 0.0,
+     "seconds": 0.0013251304626464844
+    },
+    "agent_cr_off": {
+     "depth_red_pct": 0.0,
+     "gate_red_pct": 0.0,
+     "seconds": 0.0007255077362060547
+    },
+    "agent_nocr": {
+     "depth_red_pct": 0.0,
+     "gate_red_pct": 0.0,
+     "seconds": 0.0006656646728515625
+    }
+   }
+  }
+ }
+}

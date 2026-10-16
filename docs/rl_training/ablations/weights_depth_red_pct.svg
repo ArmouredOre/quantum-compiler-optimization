@@ -1,0 +1,85 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="712" height="328" viewBox="0 0 712 328" font-family="system-ui,sans-serif">
+<rect width="712" height="328" fill="#fcfcfb"/>
+<text x="64" y="24" font-size="14" font-weight="600" fill="#0b0b0b">Reward-weight sweep: depth reduction %</text>
+<line x1="64" x2="688" y1="244.0" y2="244.0" stroke="#e4e3df" stroke-width="1"/>
+<text x="58" y="248.0" font-size="11" text-anchor="end" fill="#52514e">0</text>
+<line x1="64" x2="688" y1="180.0" y2="180.0" stroke="#e4e3df" stroke-width="1"/>
+<text x="58" y="184.0" font-size="11" text-anchor="end" fill="#52514e">5</text>
+<line x1="64" x2="688" y1="116.0" y2="116.0" stroke="#e4e3df" stroke-width="1"/>
+<text x="58" y="120.0" font-size="11" text-anchor="end" fill="#52514e">10</text>
+<line x1="64" x2="688" y1="52.0" y2="52.0" stroke="#e4e3df" stroke-width="1"/>
+<text x="58" y="56.0" font-size="11" text-anchor="end" fill="#52514e">15</text>
+<text x="14" y="148" font-size="11" fill="#52514e" transform="rotate(-90 14 148)" text-anchor="middle">depth reduction %</text>
+<rect x="80.0" y="76.8" width="16.0" height="167.2" rx="2" fill="#2a78d6"><title>baseline (CR on) / 5-6q: 13.1</title></rect>
+<line x1="88.0" x2="88.0" y1="82.8" y2="70.9" stroke="#0b0b0b" stroke-width="1"/>
+<rect x="98.0" y="95.2" width="16.0" height="148.8" rx="2" fill="#eb6834"><title>depth only / 5-6q: 11.6</title></rect>
+<line x1="106.0" x2="106.0" y1="97.0" y2="93.4" stroke="#0b0b0b" stroke-width="1"/>
+<rect x="116.0" y="89.9" width="16.0" height="154.1" rx="2" fill="#1baf7a"><title>gates only / 5-6q: 12</title></rect>
+<line x1="124.0" x2="124.0" y1="93.4" y2="86.3" stroke="#0b0b0b" stroke-width="1"/>
+<rect x="134.0" y="95.2" width="16.0" height="148.8" rx="2" fill="#eda100"><title>no fidelity term / 5-6q: 11.6</title></rect>
+<line x1="142.0" x2="142.0" y1="97.0" y2="93.4" stroke="#0b0b0b" stroke-width="1"/>
+<rect x="152.0" y="89.9" width="16.0" height="154.1" rx="2" fill="#e87ba4"><title>fidelity x4 / 5-6q: 12</title></rect>
+<line x1="160.0" x2="160.0" y1="97.0" y2="82.8" stroke="#0b0b0b" stroke-width="1"/>
+<rect x="170.0" y="93.4" width="16.0" height="150.6" rx="2" fill="#008300"><title>no terminal bonus / 5-6q: 11.8</title></rect>
+<rect x="188.0" y="78.0" width="16.0" height="166.0" rx="2" fill="#6250d6"><title>terminal x3 / 5-6q: 13</title></rect>
+<line x1="196.0" x2="196.0" y1="81.6" y2="74.5" stroke="#0b0b0b" stroke-width="1"/>
+<text x="142.0" y="262" font-size="11" text-anchor="middle" fill="#0b0b0b">5-6q</text>
+<rect x="236.0" y="120.2" width="16.0" height="123.8" rx="2" fill="#2a78d6"><title>baseline (CR on) / 8-12q: 9.67</title></rect>
+<line x1="244.0" x2="244.0" y1="123.7" y2="116.7" stroke="#0b0b0b" stroke-width="1"/>
+<rect x="254.0" y="128.8" width="16.0" height="115.2" rx="2" fill="#eb6834"><title>depth only / 8-12q: 9</title></rect>
+<line x1="262.0" x2="262.0" y1="136.6" y2="120.9" stroke="#0b0b0b" stroke-width="1"/>
+<rect x="272.0" y="126.6" width="16.0" height="117.4" rx="2" fill="#1baf7a"><title>gates only / 8-12q: 9.17</title></rect>
+<line x1="280.0" x2="280.0" y1="129.6" y2="123.7" stroke="#0b0b0b" stroke-width="1"/>
+<rect x="290.0" y="128.8" width="16.0" height="115.2" rx="2" fill="#eda100"><title>no fidelity term / 8-12q: 9</title></rect>
+<line x1="298.0" x2="298.0" y1="136.6" y2="120.9" stroke="#0b0b0b" stroke-width="1"/>
+<rect x="308.0" y="109.6" width="16.0" height="134.4" rx="2" fill="#e87ba4"><title>fidelity x4 / 8-12q: 10.5</title></rect>
+<line x1="316.0" x2="316.0" y1="116.7" y2="102.6" stroke="#0b0b0b" stroke-width="1"/>
+<rect x="326.0" y="133.1" width="16.0" height="110.9" rx="2" fill="#008300"><title>no terminal bonus / 8-12q: 8.67</title></rect>
+<line x1="334.0" x2="334.0" y1="145.2" y2="121.0" stroke="#0b0b0b" stroke-width="1"/>
+<rect x="344.0" y="116.8" width="16.0" height="127.2" rx="2" fill="#6250d6"><title>terminal x3 / 8-12q: 9.93</title></rect>
+<line x1="352.0" x2="352.0" y1="117.0" y2="116.7" stroke="#0b0b0b" stroke-width="1"/>
+<text x="298.0" y="262" font-size="11" text-anchor="middle" fill="#0b0b0b">8-12q</text>
+<rect x="392.0" y="88.5" width="16.0" height="155.5" rx="2" fill="#2a78d6"><title>baseline (CR on) / 16-20q: 12.1</title></rect>
+<rect x="410.0" y="90.0" width="16.0" height="154.0" rx="2" fill="#eb6834"><title>depth only / 16-20q: 12</title></rect>
+<line x1="418.0" x2="418.0" y1="100.6" y2="79.4" stroke="#0b0b0b" stroke-width="1"/>
+<rect x="428.0" y="125.1" width="16.0" height="118.9" rx="2" fill="#1baf7a"><title>gates only / 16-20q: 9.29</title></rect>
+<line x1="436.0" x2="436.0" y1="144.9" y2="105.3" stroke="#0b0b0b" stroke-width="1"/>
+<rect x="446.0" y="90.0" width="16.0" height="154.0" rx="2" fill="#eda100"><title>no fidelity term / 16-20q: 12</title></rect>
+<line x1="454.0" x2="454.0" y1="100.6" y2="79.4" stroke="#0b0b0b" stroke-width="1"/>
+<rect x="464.0" y="110.0" width="16.0" height="134.0" rx="2" fill="#e87ba4"><title>fidelity x4 / 16-20q: 10.5</title></rect>
+<line x1="472.0" x2="472.0" y1="147.9" y2="72.2" stroke="#0b0b0b" stroke-width="1"/>
+<rect x="482.0" y="141.8" width="16.0" height="102.2" rx="2" fill="#008300"><title>no terminal bonus / 16-20q: 7.98</title></rect>
+<rect x="500.0" y="110.0" width="16.0" height="134.0" rx="2" fill="#6250d6"><title>terminal x3 / 16-20q: 10.5</title></rect>
+<line x1="508.0" x2="508.0" y1="147.9" y2="72.1" stroke="#0b0b0b" stroke-width="1"/>
+<text x="454.0" y="262" font-size="11" text-anchor="middle" fill="#0b0b0b">16-20q</text>
+<rect x="548.0" y="108.3" width="16.0" height="135.7" rx="2" fill="#2a78d6"><title>baseline (CR on) / 40q: 10.6</title></rect>
+<line x1="556.0" x2="556.0" y1="113.4" y2="103.2" stroke="#0b0b0b" stroke-width="1"/>
+<rect x="566.0" y="125.6" width="16.0" height="118.4" rx="2" fill="#eb6834"><title>depth only / 40q: 9.25</title></rect>
+<line x1="574.0" x2="574.0" y1="129.7" y2="121.5" stroke="#0b0b0b" stroke-width="1"/>
+<rect x="584.0" y="123.6" width="16.0" height="120.4" rx="2" fill="#1baf7a"><title>gates only / 40q: 9.41</title></rect>
+<line x1="592.0" x2="592.0" y1="124.6" y2="122.6" stroke="#0b0b0b" stroke-width="1"/>
+<rect x="602.0" y="125.6" width="16.0" height="118.4" rx="2" fill="#eda100"><title>no fidelity term / 40q: 9.25</title></rect>
+<line x1="610.0" x2="610.0" y1="129.7" y2="121.5" stroke="#0b0b0b" stroke-width="1"/>
+<rect x="620.0" y="125.1" width="16.0" height="118.9" rx="2" fill="#e87ba4"><title>fidelity x4 / 40q: 9.29</title></rect>
+<line x1="628.0" x2="628.0" y1="135.8" y2="114.5" stroke="#0b0b0b" stroke-width="1"/>
+<rect x="638.0" y="133.7" width="16.0" height="110.3" rx="2" fill="#008300"><title>no terminal bonus / 40q: 8.62</title></rect>
+<line x1="646.0" x2="646.0" y1="139.8" y2="127.6" stroke="#0b0b0b" stroke-width="1"/>
+<rect x="656.0" y="119.0" width="16.0" height="125.0" rx="2" fill="#6250d6"><title>terminal x3 / 40q: 9.76</title></rect>
+<line x1="664.0" x2="664.0" y1="122.5" y2="115.5" stroke="#0b0b0b" stroke-width="1"/>
+<text x="610.0" y="262" font-size="11" text-anchor="middle" fill="#0b0b0b">40q</text>
+<line x1="64" x2="688" y1="244.0" y2="244.0" stroke="#52514e" stroke-width="1"/>
+<rect x="64" y="277" width="10" height="10" rx="2" fill="#2a78d6"/>
+<text x="79" y="286" font-size="11" fill="#0b0b0b">baseline (CR on)</text>
+<rect x="203" y="277" width="10" height="10" rx="2" fill="#eb6834"/>
+<text x="218" y="286" font-size="11" fill="#0b0b0b">depth only</text>
+<rect x="342" y="277" width="10" height="10" rx="2" fill="#1baf7a"/>
+<text x="357" y="286" font-size="11" fill="#0b0b0b">gates only</text>
+<rect x="480" y="277" width="10" height="10" rx="2" fill="#eda100"/>
+<text x="495" y="286" font-size="11" fill="#0b0b0b">no fidelity term</text>
+<rect x="64" y="295" width="10" height="10" rx="2" fill="#e87ba4"/>
+<text x="79" y="304" font-size="11" fill="#0b0b0b">fidelity x4</text>
+<rect x="203" y="295" width="10" height="10" rx="2" fill="#008300"/>
+<text x="218" y="304" font-size="11" fill="#0b0b0b">no terminal bonus</text>
+<rect x="342" y="295" width="10" height="10" rx="2" fill="#6250d6"/>
+<text x="357" y="304" font-size="11" fill="#0b0b0b">terminal x3</text>
+</svg>
