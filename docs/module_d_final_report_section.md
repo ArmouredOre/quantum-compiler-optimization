@@ -5,10 +5,8 @@
 **Author / Module Owner:** Swaraj Rane ([@ArmouredOre](https://github.com/ArmouredOre)) · Module D + Stage 6 + integration (M5)
 **Covers:** #13 (operators + surrogate), #30 (N3 block-level crossover), #31 (pipeline wiring), #40 (Pareto fronts)
 
-> **Status.** Sections 1–3 and 5 are final. Section 4.3 (Pareto fronts inside
-> the full pipeline) is **provisional**: it depends on the Stage-4 modules,
-> which are still being finished (#35, #34), and will be regenerated with
-> `make eval` once they land.
+> **Status: final.** Section 4 uses the final `make eval` run with the trained
+> modules ([`eval/final/`](eval/final/README.md)).
 
 ---
 
@@ -120,27 +118,32 @@ column was measured on commit `9173b92`, the last `main` before #55.
 
 ## 4. Results inside the full pipeline
 
-### 4.1 Correctness (final)
+### 4.1 Correctness
 
-On all 26 benchmarks (up to 40 qubits), every returned front member is
-equivalent to its input: verification reports 0 unverified blocks, and an
-independent Qiskit statevector check on random input states agrees for every
-circuit up to 22 qubits (#31, #36).
+On all 26 benchmarks (up to 40 qubits), with the trained Modules A and B, every
+returned front member is equivalent to its input: verification reports 0
+unverified blocks, and an independent Qiskit statevector check on random input
+states agrees for every circuit up to 22 qubits (#36,
+[`acceptance_36.log`](eval/final/acceptance_36.log)).
 
-### 4.2 Contribution in the ablation (provisional)
+### 4.2 Contribution in the ablation
 
-Removing Module D (`use_ea=False`, front = best stitched circuit only) changes
-the suite-mean depth reduction from 8.1% to 7.7% in the current run. Gate count
-and CX-cost are unchanged — the variants are few, so the front rarely holds more
-than one or two points. To be re-measured once Modules A and B are final.
+Removing Module D (`use_ea=False`, front = the best stitched circuit only)
+lowers the suite-mean depth reduction from 7.9% to 7.1%; gate count (7.1%) and
+CX-cost (0.9%) are unchanged. Module D's gain comes from choosing better
+combinations of per-block variants, which mainly helps depth.
 
-### 4.3 Pareto fronts per benchmark (provisional)
+### 4.3 Pareto fronts per benchmark
 
-`make eval` writes `results/pareto/<circuit>.csv` and `<circuit>.png` (qco front
-against Qiskit O3, TKET, PyZX and BQSKit; panels gates vs depth and gates vs
-estimated fidelity). Fronts are small today (1–6 points), which reflects the
-limited variant pool from unfinished Stage-4 modules rather than the search
-itself. Figures for the report will be generated from the final run.
+`make eval` writes `pareto/<circuit>.csv` and `<circuit>.png` (qco front against
+Qiskit O3, TKET, PyZX and BQSKit; panels gates vs depth and gates vs estimated
+fidelity) — final run in [`eval/final/pareto/`](eval/final/pareto/). 21 of 26
+fronts have a single point; the largest is `rand_cliffordt_n10` (9 points), then
+`rand_cliffordt_n5` (4), `rand_cnotpauli_n5` and `rand_cnotpauli_n10` (3) and
+`qaoa_n6_p2` (2). The fronts are small because each block contributes only a
+few verified variants, so the trade-off is limited by Stage 4's proposals, not
+by the search. Where fronts exist, Qiskit O2/O3 usually dominates them on gates
+and depth (e.g. `rand_cliffordt_n10`).
 
 ## 5. Architectural Synergy
 
@@ -176,8 +179,8 @@ itself. Figures for the report will be generated from the final run.
 
 | Item | Location | Status |
 |---|---|:---:|
-| Module D section | `docs/module_d_final_report_section.md` | Final (4.2, 4.3 provisional) |
+| Module D section | `docs/module_d_final_report_section.md` | Final |
 | NSGA-II + N3 operators | `src/qco/modules/evolutionary/nsga2.py` | Merged (#55) |
 | N3 bench | `benchmarks/bench_nsga2.py` | Added |
 | Surrogate validation | `tests/test_fidelity_surrogate_validation.py` | ρ = 0.863 |
-| Pareto CSV + plots | `make eval` → `results/pareto/` | Merged (#62); final run pending |
+| Pareto CSV + plots | `make eval` → `results/pareto/`; final run in `docs/eval/final/pareto/` | Final |

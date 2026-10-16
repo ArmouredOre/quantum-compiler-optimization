@@ -5,6 +5,12 @@ that round-trips through the tool via OpenQASM 2.0. Tools emit different gate
 sets (Qiskit keeps ``ccx``; TKET / PyZX / BQSKit decompose it), so compare
 ``cx_cost`` - multi-qubit gates in CX-equivalents - rather than raw gate count.
 
+Output permutations: Qiskit O2/O3 (``ElidePermutations``) and TKET
+(``FullPeepholeOptimise`` implicit wire swaps) may drop SWAPs by relabeling
+qubits, recording the permutation in metadata that OpenQASM cannot carry. The
+IR has no output relabeling, so each wrapper restores the input order with
+explicit SWAPs: every tool pays for permutations, exactly as qco does.
+
 Missing packages raise ``ImportError`` from the factory; a circuit the tool
 can't handle raises ``Unsupported`` from the optimizer, and the runner skips
 that row instead of reporting a fake 0% reduction.
@@ -29,6 +35,48 @@ class Unsupported(ValueError):
 def cx_cost(ir: IntermediateRepresentation) -> int:
     """Multi-qubit gate cost in CX-equivalents (basis-independent comparison)."""
     return sum(gate_cost(g.name) for g in ir.gates if g.is_multi_qubit)
+
+
+def equivalence_status(before: IntermediateRepresentation, after: IntermediateRepresentation,
+                       max_sim_qubits: int = 22) -> bool | None:
+    """Is ``after`` equivalent to ``before`` (up to global phase)? None = could not decide.
+
+    Module C's checker first (dense <= 8 qubits, phase-polynomial beyond). Otherwise, with
+    qiskit installed, a statevector check on two random input states up to ``max_sim_qubits``
+    (a counterexample is conclusive; agreement is strong but probabilistic evidence).
+    """
+    from qco.modules.smt_verifier.equivalence import EquivalenceChecker
+
+    res = EquivalenceChecker().check(before, after)
+    if res.method != "unverified":
+        return res.equivalent
+    if before.num_qubits > max_sim_qubits:
+        return None
+    try:
+        import numpy as np
+        from qiskit.quantum_info import random_statevector
+    except ImportError:
+        return None
+    qa, qb = _to_qiskit(before), _to_qiskit(after)
+    for seed in range(2):
+        psi = random_statevector(2 ** before.num_qubits, seed=seed)
+        if abs(abs(np.vdot(psi.evolve(qa).data, psi.evolve(qb).data)) - 1) > 1e-6:
+            return False
+    return True
+
+
+def _to_qiskit(ir: IntermediateRepresentation):
+    """IR -> ``QuantumCircuit`` via Qiskit's standard-gate mapping (covers every IR gate,
+    unlike the legacy QASM 2 loader, which lacks e.g. ``ryy``)."""
+    from qiskit import QuantumCircuit
+    from qiskit.circuit.library import get_standard_gate_name_mapping
+
+    gates = get_standard_gate_name_mapping()
+    qc = QuantumCircuit(ir.num_qubits)
+    for g in ir.gates:
+        std = gates[g.name]
+        qc.append(type(std)(*g.params) if g.params else std, list(g.qubits))
+    return qc
 
 
 def _guard(tool: str):
@@ -58,6 +106,22 @@ def _back(qasm: str, ir: IntermediateRepresentation) -> IntermediateRepresentati
     return out
 
 
+def _undo_permutation_swaps(final: list[int]) -> list[tuple[int, int]]:
+    """SWAPs that move the state of virtual qubit ``v`` from position ``final[v]`` back to ``v``."""
+    pos = list(final)                      # pos[v] = where v's state currently is
+    at = {p: v for v, p in enumerate(pos)}  # at[p] = whose state sits at position p
+    swaps = []
+    for v in range(len(pos)):
+        p = pos[v]
+        if p == v:
+            continue
+        w = at[v]                          # state currently at v belongs to w
+        swaps.append((v, p))
+        pos[v], pos[w] = v, p
+        at[v], at[p] = v, w
+    return swaps
+
+
 def qiskit_baseline(level: int) -> Optimizer:
     """``transpile(optimization_level=level)`` restricted to the IR gate set."""
     from qiskit import qasm2, transpile
@@ -66,6 +130,9 @@ def qiskit_baseline(level: int) -> Optimizer:
     def run(ir: IntermediateRepresentation) -> IntermediateRepresentation:
         qc = qasm2.loads(ir.to_qasm2(), custom_instructions=qasm2.LEGACY_CUSTOM_INSTRUCTIONS)
         out = transpile(qc, basis_gates=list(ARITY), optimization_level=level, seed_transpiler=0)
+        if out.layout is not None:  # ElidePermutations (O2/O3) leaves a final qubit permutation
+            for a, b in _undo_permutation_swaps(out.layout.final_index_layout()):
+                out.swap(a, b)
         return _back(qasm2.dumps(out), ir)
 
     return run
@@ -82,6 +149,7 @@ def tket_baseline() -> Optimizer:
         c = circuit_from_qasm_str(ir.to_qasm2())
         DecomposeBoxes().apply(c)  # pytket parses some qelib1 gates (e.g. cp) as CustomGate
         FullPeepholeOptimise().apply(c)
+        c.replace_implicit_wire_swaps()  # explicit SWAPs; the rebase below turns them into CX
         AutoRebase({OpType.CX, OpType.Rz, OpType.Rx, OpType.H}).apply(c)
         return _back(circuit_to_qasm_str(c), ir)
 

@@ -64,8 +64,15 @@ Metrics: number of blocks, cut (DAG edges crossing block boundaries; parallel ed
 The fallback has no width cap by design: the `partitioning.py` module docstring says so, and the tests skip the width check for it. The 16–20 qubit blocks in the tuning table are expected, not a bug. Three consequences are still worth stating:
 
 - `partition_circuit` documents `max_block_qubits` as a cap for every backend, but the fallback ignores it. The docstring now says so.
-- The pipeline verifies each block after compacting it to its active qubits, and dense checking stops at 8 qubits. Wide fallback blocks should therefore come back "unverified", and rewrites that need a check (the Module A schedule, GNN extras) are rejected. **[TODO: confirm in `EquivalenceChecker`.]**
-- If so, the fallback's higher gate reduction in the tuning table (up to 15 %) comes mostly from rule-proven cancellations, which skip verification, inside larger blocks. It is not a like-for-like comparison with greedy, whose blocks are all verifiable. Findings 3 and 5 above should carry that caveat.
+- The pipeline verifies each block after compacting it to its active qubits, and dense checking stops at 8 qubits. Wide fallback blocks therefore come back "unverified", and rewrites that need a check (the Module A schedule, GNN extras) are rejected. **Confirmed** (`EquivalenceChecker.check` returns method `"unverified"` beyond 8 qubits unless the block is phase-polynomial; measured by Swaraj on `rand_cliffordt_n20`, solver budget 0.5 s, no NSGA-II):
+
+  | backend | max_block_gates | blocks | unverified blocks | rule-proven (unchecked) | gates | output equivalent |
+  |---|---|---|---|---|---|---|
+  | greedy | 64 | 60 | 0 | 0 | 662 → 579 | yes |
+  | fallback | 128 | 6 | 6 | 5 | 662 → 572 | yes |
+  | fallback | 192 | 4 | 4 | 4 | 662 → 562 | yes |
+
+- So the fallback's higher gate reduction in the tuning table (up to 15 %) comes from rule-proven cancellations, which skip verification, inside larger blocks; every schedule and GNN rewrite is rejected. It is not a like-for-like comparison with greedy, whose blocks are all verifiable. Findings 3 and 5 above carry that caveat.
 
 ## 5. Block scheduling and parallel processing
 
