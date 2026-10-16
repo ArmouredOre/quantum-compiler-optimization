@@ -36,7 +36,7 @@ from qco.evaluation.metrics import (
     runtime_complexity,
     scalarized_reward,
 )
-from qco.evaluation.baselines import Unsupported, available_baselines, cx_cost
+from qco.evaluation.baselines import Unsupported, available_baselines, cx_cost, equivalence_status
 from qco.ir.intermediate_representation import IntermediateRepresentation
 from qco.ir.parser import from_qasm2
 
@@ -55,7 +55,7 @@ CSV_FIELDS = [
     "gate_reduction_pct", "depth_reduction_pct", "exec_time_ns", "fidelity_after",
     "optimizer_seconds", "runtime_complexity_s_per_gate", "reward",
     "baseline_name", "baseline_gate_count", "baseline_depth",
-    "cx_cost_before", "cx_cost_after", "solver_seconds",
+    "cx_cost_before", "cx_cost_after", "solver_seconds", "equivalent",
 ]
 
 
@@ -82,6 +82,7 @@ class BenchmarkRow:
     cx_cost_before: int = 0          # multi-qubit cost in CX-equivalents (basis-independent)
     cx_cost_after: int = 0
     solver_seconds: float | None = None  # exact re-synthesis time, when the optimizer reports it
+    equivalent: bool | None = None       # output == input? (check_equivalence=True); None = not decided
 
     @property
     def cx_cost_reduction_pct(self) -> float:
@@ -156,6 +157,7 @@ def run_benchmarks(
     baseline: Callable[[IntermediateRepresentation], IntermediateRepresentation] | None = None,
     baseline_name: str = "qiskit-O2",
     max_qubits: int | None = None,
+    check_equivalence: bool = False,
 ) -> BenchmarkReport:
     """Run ``optimizer`` over every circuit in ``directory`` (default: the
     committed suite) and tabulate the five evaluation-parameter metrics.
@@ -208,6 +210,7 @@ def run_benchmarks(
                 cx_cost_before=cx_cost(ir),
                 cx_cost_after=cx_cost(opt),
                 solver_seconds=solver_s,
+                equivalent=equivalence_status(ir, opt) if check_equivalence else None,
             )
         )
     return report
@@ -218,20 +221,33 @@ def summary_markdown(reports: dict[str, BenchmarkReport], title: str) -> str:
     lines = [
         f"### {title}",
         "",
-        "| optimizer | circuits | gate red % | depth red % | CX-cost red % | exec (ns) | "
+        "| optimizer | circuits | correct | gate red % | depth red % | CX-cost red % | exec (ns) | "
         "fidelity | opt (s) | solver (s) | skipped |",
-        "|---|---|---|---|---|---|---|---|---|---|",
+        "|---|---|---|---|---|---|---|---|---|---|---|",
     ]
+    wrong: list[str] = []
     for name, r in reports.items():
         n = len(r.rows)
         cx = sum(row.cx_cost_reduction_pct for row in r.rows) / n if n else 0.0
         solver = [row.solver_seconds for row in r.rows if row.solver_seconds is not None]
         solver_cell = f"{sum(solver):.1f}" if solver else "—"
+        decided = [row.equivalent for row in r.rows if row.equivalent is not None]
+        correct = f"{sum(decided)}/{len(decided)}" if decided else "—"
+        if len(decided) < n and decided:
+            correct += f" ({n - len(decided)} n/a)"
+        if not all(decided):
+            correct = f"**{correct} ✗**"
+            wrong.append(f"> ⚠ **{name}**: {len(decided) - sum(decided)} output(s) are NOT equivalent to "
+                         "their input, so its reductions are not valid results.")
         lines.append(
-            f"| {name} | {n} | {r.mean('gate_reduction_pct'):.1f} | {r.mean('depth_reduction_pct'):.1f} | "
+            f"| {name} | {n} | {correct} | {r.mean('gate_reduction_pct'):.1f} | {r.mean('depth_reduction_pct'):.1f} | "
             f"{cx:.1f} | {r.mean('exec_time_ns'):.0f} | {r.mean('fidelity_after'):.4f} | "
             f"{r.mean('optimizer_seconds'):.2f} | {solver_cell} | {len(r.skipped)} |"
         )
+    if wrong:
+        lines += [""] + wrong
+    lines += ["", "*correct* = outputs checked equivalent to the input (Module C's checker, else a Qiskit "
+              "statevector check on random states up to 22 qubits; n/a = too wide to decide)."]
     return "\n".join(lines)
 
 
@@ -433,7 +449,8 @@ def main(argv: list[str] | None = None) -> str:
                 print(f"  [{label}] {ir.name} n={ir.num_qubits} {time.perf_counter() - t0:.1f}s",
                       file=sys.stderr, flush=True)
 
-        return run_benchmarks(logged, args.suite, args.calibration, max_qubits=max_qubits)
+        return run_benchmarks(logged, args.suite, args.calibration, max_qubits=max_qubits,
+                              check_equivalence=True)
 
     def qco(fronts=None, **cfg):
         return pipeline_optimizer(fronts=fronts, solver_budget_s=args.budget, calibration=args.calibration,

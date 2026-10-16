@@ -300,3 +300,58 @@ def test_tool_crash_becomes_unsupported_row():
 
     with pytest.raises(Unsupported, match="flaky: RuntimeError"):
         crashes(IntermediateRepresentation(1))
+
+
+# -- correctness column: wrong outputs are flagged, never reported as gains --------
+
+from qco.evaluation.baselines import equivalence_status
+from qco.evaluation.benchmark_runner import summary_markdown
+
+
+def test_equivalence_status_catches_wrong_output():
+    ir = IntermediateRepresentation(2).add("h", [0]).add("cx", [0, 1])
+    assert equivalence_status(ir, ir.copy()) is True
+    assert equivalence_status(ir, IntermediateRepresentation(2).add("cx", [0, 1])) is False
+
+
+def test_equivalence_status_beyond_dense_limit_uses_simulation_or_abstains():
+    wide = IntermediateRepresentation(10)
+    for q in range(10):
+        wide.add("h", [q])
+    wrong = IntermediateRepresentation(10, list(wide.gates[:-1]))
+    status = equivalence_status(wide, wrong)
+    try:
+        import qiskit  # noqa: F401
+    except ImportError:
+        assert status is None          # can't decide without qiskit: never claims "equivalent"
+    else:
+        assert status is False
+    assert equivalence_status(wide, wide.copy(), max_sim_qubits=4) is None
+
+
+def test_summary_flags_incorrect_optimizer(tmp_path):
+    (tmp_path / "s").mkdir()
+    suite = _tiny_suite(tmp_path / "s", names=("grover_w3_i1.qasm",))
+
+    def breaks_it(ir):
+        out = ir.copy()
+        out.gates = out.gates[1:]  # drop a gate: smaller, and wrong
+        return out
+
+    good = run_benchmarks(_identity, suite, check_equivalence=True)
+    bad = run_benchmarks(breaks_it, suite, check_equivalence=True)
+    assert good.rows[0].equivalent is True and bad.rows[0].equivalent is False
+    md = summary_markdown({"identity": good, "broken": bad}, "t")
+    assert "| identity | 1 | 1/1 |" in md
+    assert "**0/1 ✗**" in md and "**broken**: 1 output(s) are NOT equivalent" in md
+
+
+def test_equivalence_status_handles_every_ir_gate_beyond_dense_limit():
+    pytest.importorskip("qiskit")
+    from qco.ir.intermediate_representation import ARITY, PARAMETRIC
+
+    wide = IntermediateRepresentation(10)
+    for name, n in sorted(ARITY.items()):
+        wide.add(name, list(range(n)), [0.4] if name in PARAMETRIC else [])
+    wide.add("h", [9])  # touch all 10 qubits' register width; dense checker abstains
+    assert equivalence_status(wide, wide.copy()) is True

@@ -31,6 +31,48 @@ def cx_cost(ir: IntermediateRepresentation) -> int:
     return sum(gate_cost(g.name) for g in ir.gates if g.is_multi_qubit)
 
 
+def equivalence_status(before: IntermediateRepresentation, after: IntermediateRepresentation,
+                       max_sim_qubits: int = 22) -> bool | None:
+    """Is ``after`` equivalent to ``before`` (up to global phase)? None = could not decide.
+
+    Module C's checker first (dense <= 8 qubits, phase-polynomial beyond). Otherwise, with
+    qiskit installed, a statevector check on two random input states up to ``max_sim_qubits``
+    (a counterexample is conclusive; agreement is strong but probabilistic evidence).
+    """
+    from qco.modules.smt_verifier.equivalence import EquivalenceChecker
+
+    res = EquivalenceChecker().check(before, after)
+    if res.method != "unverified":
+        return res.equivalent
+    if before.num_qubits > max_sim_qubits:
+        return None
+    try:
+        import numpy as np
+        from qiskit.quantum_info import random_statevector
+    except ImportError:
+        return None
+    qa, qb = _to_qiskit(before), _to_qiskit(after)
+    for seed in range(2):
+        psi = random_statevector(2 ** before.num_qubits, seed=seed)
+        if abs(abs(np.vdot(psi.evolve(qa).data, psi.evolve(qb).data)) - 1) > 1e-6:
+            return False
+    return True
+
+
+def _to_qiskit(ir: IntermediateRepresentation):
+    """IR -> ``QuantumCircuit`` via Qiskit's standard-gate mapping (covers every IR gate,
+    unlike the legacy QASM 2 loader, which lacks e.g. ``ryy``)."""
+    from qiskit import QuantumCircuit
+    from qiskit.circuit.library import get_standard_gate_name_mapping
+
+    gates = get_standard_gate_name_mapping()
+    qc = QuantumCircuit(ir.num_qubits)
+    for g in ir.gates:
+        std = gates[g.name]
+        qc.append(type(std)(*g.params) if g.params else std, list(g.qubits))
+    return qc
+
+
 def _guard(tool: str):
     """Turn a tool crash on one circuit into ``Unsupported`` (row skipped, run continues)."""
 
