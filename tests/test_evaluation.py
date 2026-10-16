@@ -215,14 +215,17 @@ def test_runner_records_solver_seconds_and_skips_unsupported(tmp_path):
     assert "ghz_n5.qasm" in small and "ghz_n10.qasm" not in small
 
 
+# qft_n5 has SWAPs (Qiskit O2/O3 and TKET elide them into a qubit permutation) and
+# rand_cnotpauli_n5 triggers TKET's implicit wire swaps: both must come back explicit.
+@pytest.mark.parametrize("circuit", ["grover_w3_i1", "qft_n5", "rand_cnotpauli_n5"])
 @pytest.mark.parametrize("tool", ["qiskit-O0", "qiskit-O1", "qiskit-O2", "qiskit-O3", "tket", "pyzx", "bqskit"])
-def test_baselines_return_equivalent_circuits(tool):
+def test_baselines_return_equivalent_circuits(tool, circuit):
     from qco.evaluation.baselines import available_baselines
 
     opt = available_baselines().get(tool)
     if opt is None:
         pytest.skip(f"{tool} not installed")
-    ir = from_qasm2(open(os.path.join(BENCH_DIR, "grover_w3_i1.qasm")).read())
+    ir = from_qasm2(open(os.path.join(BENCH_DIR, f"{circuit}.qasm")).read())
     out = opt(ir.copy())
     assert out.num_qubits == ir.num_qubits
     assert EquivalenceChecker(backend="numeric").check(ir, out).equivalent
@@ -355,3 +358,13 @@ def test_equivalence_status_handles_every_ir_gate_beyond_dense_limit():
         wide.add(name, list(range(n)), [0.4] if name in PARAMETRIC else [])
     wide.add("h", [9])  # touch all 10 qubits' register width; dense checker abstains
     assert equivalence_status(wide, wide.copy()) is True
+
+
+def test_undo_permutation_swaps_restores_order():
+    from qco.evaluation.baselines import _undo_permutation_swaps
+
+    for final in ([0, 1, 2], [4, 3, 2, 1, 0], [1, 2, 0], [2, 0, 3, 1]):
+        state = {p: v for v, p in enumerate(final)}  # position -> virtual qubit
+        for a, b in _undo_permutation_swaps(final):
+            state[a], state[b] = state[b], state[a]
+        assert all(state[p] == p for p in state), final
