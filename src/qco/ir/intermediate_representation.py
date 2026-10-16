@@ -52,6 +52,10 @@ class Gate:
             raise ValueError(
                 f"gate {self.name!r} expects {expected} qubits, got {self.qubits!r}"
             )
+        if len(set(self.qubits)) != len(self.qubits):
+            raise ValueError(f"gate {self.name!r} repeats a qubit: {self.qubits!r}")
+        if any(q < 0 for q in self.qubits):
+            raise ValueError(f"gate {self.name!r} has a negative qubit index: {self.qubits!r}")
 
     @property
     def is_two_qubit(self) -> bool:

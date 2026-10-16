@@ -28,8 +28,6 @@ import tempfile
 from collections import Counter
 from collections.abc import Sequence
 from dataclasses import dataclass, field, replace
-from collections import Counter
-from dataclasses import dataclass, field
 
 from qco.graphs.dag import build_dag
 from qco.graphs.hypergraph import QubitHypergraph, build_hypergraph
@@ -58,7 +56,12 @@ def partition_circuit(
 
     ``backend``: ``"auto"`` / ``"greedy"``, ``"kahypar"``, ``"metis"`` or
     ``"fallback"`` (see module docstring). A missing solver raises ImportError.
+    The ``fallback`` backend ignores ``max_block_qubits`` (its blocks can span the whole circuit).
     """
+    if max_block_gates < 1:
+        raise ValueError(f"max_block_gates must be >= 1, got {max_block_gates}")
+    if max_block_qubits < 1:
+        raise ValueError(f"max_block_qubits must be >= 1, got {max_block_qubits}")
     if backend == "fallback":
         return _fallback_partition(ir, max_block_gates)
     if backend not in ("auto", "greedy", "kahypar", "metis"):
@@ -76,7 +79,10 @@ def partition_circuit(
 
 
 def cut_size(ir: IntermediateRepresentation, blocks: list[Block]) -> int:
-    """Number of gate-DAG edges (qubit wires) that cross between blocks."""
+    """Number of distinct gate-DAG edges that cross between blocks.
+
+    Two gates joined by several shared qubits count once.
+    """
     owner = {g: b.index for b in blocks for g in b.source_gate_ids}
     dag = build_dag(ir)
     return sum(owner[u] != owner[v] for u, vs in dag.succ.items() for v in vs)
