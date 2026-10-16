@@ -162,3 +162,27 @@ class TestPipelineDefaultPolicy:
         best = res.pareto_front[0].circuit
         assert res.verified and EquivalenceChecker().check(ir, best).equivalent
         assert best.gate_count() < ir.gate_count()
+
+
+class TestSingleDefaultPolicy:
+    def test_benchmark_runner_cli_uses_the_pipeline_default_agent(self):
+        """#41: `make eval` and HybridOptimizer() must run the same committed policy."""
+        import os
+
+        from qco.evaluation.benchmark_runner import DEFAULT_RL_POLICY as cli_default
+
+        assert os.path.samefile(cli_default, DEFAULT_RL_POLICY)
+
+
+class TestStepEnumeratesActionsOnce:
+    def test_legal_actions_called_once_per_step(self):
+        """#41: ``step`` used to call ``legal_actions()`` twice (info + fixed-point test)."""
+        ir = parse("benchmarks/circuits/rand_cliffordt_n5.qasm")
+        env = SchedulerEnv(ir, commutation="full", reduction=True)
+        _, info = env.reset()
+        calls = []
+        real = env.legal_actions
+        env.legal_actions = lambda: calls.append(1) or real()
+        _, _, _, _, info2 = env.step(info["legal_actions"][1])
+        assert len(calls) == 1
+        assert info2["legal_actions"][0].kind == ActionKind.NOOP

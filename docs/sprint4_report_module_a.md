@@ -58,4 +58,4 @@
 - Hand-off for #36: call `optimize_blocks` and keep `parallel_blocks=1` unless resynthesis dominates.
 - METIS/KaHyPar rows are missing from the tuning table (not installable here).
 - Parallel speedup under a non-binding budget is unmeasured (too slow here).
-- `benchmark_runner.DEFAULT_RL_POLICY` still points at `docs/rl_training/ppo_5q/best.json`; unify later.
+- `benchmark_runner.DEFAULT_RL_POLICY` pointed at `docs/rl_training/ppo_5q/best.json`; fixed in #41 (it now matches the pipeline default).

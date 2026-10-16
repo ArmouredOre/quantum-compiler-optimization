@@ -259,7 +259,8 @@ class SchedulerEnv:
         self._prev_fidelity = new_fidelity
         self._prev_time = new_time
 
-        terminated = (self.stop_on_noop and action.kind == ActionKind.NOOP) or self._is_fixed_point()
+        legal = self.legal_actions()  # once per step: it is the most expensive call here (#41; was computed twice)
+        terminated = (self.stop_on_noop and action.kind == ActionKind.NOOP) or len(legal) <= 1
         truncated = self._steps >= self.max_episode_steps
         terminal_bonus = 0.0
         if terminated or truncated:
@@ -273,7 +274,7 @@ class SchedulerEnv:
             reward += self.weights.terminal * terminal_bonus
 
         info = {
-            "legal_actions": self.legal_actions(),
+            "legal_actions": legal,
             "d_gate_count": d_gate_count,
             "d_depth": d_depth,
             "d_fidelity": d_fidelity,
@@ -285,7 +286,7 @@ class SchedulerEnv:
 
     def _is_fixed_point(self) -> bool:
         """True once ``legal_actions()`` only contains NOOP: nothing left to try."""
-        return len(self.legal_actions()) <= 1
+        return len(self.legal_actions()) <= 1  # ``step`` inlines this on its already-computed list
 
     # -- helpers already usable ------------------------------------------------
     def legal_actions(self) -> list[Action]:

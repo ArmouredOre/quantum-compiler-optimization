@@ -71,3 +71,6 @@ eval-backends-bench:  ## #37/#29: per-backend policies on the benchmark circuits
 
 bench-scaling:  ## #37: measured Module A scaling
 	python benchmarks/bench_module_a_scaling.py
+
+figures-module-a:  ## #41: Module A report figures from the committed result files (needs matplotlib)
+	python scripts/plot_module_a_figures.py
