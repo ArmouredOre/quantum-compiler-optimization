@@ -39,13 +39,14 @@ def _eval_param(expr: str) -> float:
     for name, val in _CONSTS.items():
         expr = re.sub(rf"\b{name}\b", repr(val), expr)
     # Only arithmetic on numbers/operators is permitted.
-    if not re.fullmatch(r"[0-9eE+\-*/(). ]+", expr):
+    if "**" in expr or "//" in expr or not re.fullmatch(r"[0-9eE+\-*/(). ]+", expr):
         raise ValueError(f"unsupported parameter expression: {expr!r}")
     return float(eval(expr, {"__builtins__": {}}, {}))  # noqa: S307 - sandboxed above
 
 
 def from_qasm2(text: str) -> IntermediateRepresentation:
     """Parse an OpenQASM 2.0 string into an :class:`IntermediateRepresentation`."""
+    text = re.sub(r"//[^\n]*", "", text)  # comments must not reach the qreg scan or the gate regex
     offset: dict[str, int] = {}
     nq = 0
     for m in _QREG.finditer(text):
@@ -68,7 +69,7 @@ def from_qasm2(text: str) -> IntermediateRepresentation:
             continue
         gm = _GATE.match(line)
         if not gm:
-            continue
+            raise ValueError(f"cannot parse line: {line!r}")
         name = _canonical(gm.group(1))
         params = ()
         if gm.group(2):
@@ -95,6 +96,8 @@ def from_qiskit(circuit: Any, bindings: dict | None = None) -> IntermediateRepre
         op = inst.operation
         if op.name in ("measure", "reset", "barrier", "delay"):
             continue
+        if getattr(op, "condition", None) is not None:
+            raise ValueError(f"classically conditioned gate {op.name!r} is not supported")
         qubits = tuple(circuit.find_bit(q).index for q in inst.qubits)
         ir.add(_canonical(op.name), qubits, tuple(float(p) for p in op.params))
     return ir
