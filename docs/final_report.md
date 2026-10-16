@@ -420,4 +420,4 @@ integration — Swaraj Rane. Graph-layer follow-ups were redistributed: #45
 | Final `make eval` run (qco, baselines, ablations, N1, N5, Pareto) | Swaraj | #36, #40 | ✅ [`eval/final/`](eval/final/README.md) |
 | Abstract, results, discussion, conclusion | Swaraj | #44 | ✅ this file |
 | Demo | — | #60 | ✅ Streamlit app (`app/`) |
-| Review 3 slides | Swaraj | #44 | ⏳ |
+| Review 3 slides | Swaraj | #44 | ✅ 15-slide deck with speaker notes (kept as a Claude artifact, shared by Swaraj) |
